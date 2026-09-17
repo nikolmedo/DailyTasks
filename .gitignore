@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Runtime data — personal tasks, generated e-ink frames, WAL files
+database/*.db
+database/*.db-shm
+database/*.db-wal
+database/display_temp.png
+database/display_payload.json
+
+# Local tool/session config
+.claude/
+.agents/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# OS/editor cruft
+.DS_Store
+*.log

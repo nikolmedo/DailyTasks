@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c0e">
+  <meta name="description" content="Panel de control de Daily Tasks para dispositivos Distiller">
+  <title>Daily Tasks</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0c0e'/><rect x='6' y='7' width='20' height='5' fill='%23e8e4d9'/><rect x='6' y='15' width='13' height='3' fill='%236b7076'/><rect x='6' y='21' width='17' height='3' fill='%236b7076'/></svg>">
+</head>
+<body>
+  <!-- Ambient field: takes its hue from the live LED -->
+  <div class="ambient" aria-hidden="true">
+    <div class="ambient-glow ambient-glow-a"></div>
+    <div class="ambient-glow ambient-glow-b"></div>
+    <div class="ambient-grid"></div>
+    <div class="ambient-scan"></div>
+  </div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <a class="skip-link" href="#tasksPanel">Ir a las tareas</a>
+
+  <div class="shell">
+
+    <!-- ══════════════ Top bar ══════════════ -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <span class="brand-mark-bar"></span>
+          <span class="brand-mark-bar"></span>
+          <span class="brand-mark-bar"></span>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name" data-i18n="app.title">Daily Tasks</span>
+          <span class="brand-sub" id="dateLabel">—</span>
+        </span>
+      </div>
+
+      <div class="topbar-actions">
+        <span class="conn-pill" id="connPill" data-state="ok" title="">
+          <span class="conn-dot" aria-hidden="true"></span>
+          <span class="conn-zone mono" id="connZone">—</span>
+        </span>
+        <button class="icon-btn" id="refreshStatusBtn" type="button"
+                data-i18n-aria="app.refreshDisplay" data-i18n-title="app.refreshDisplay" aria-label="Actualizar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/>
+            <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/>
+          </svg>
+        </button>
+        <button class="primary-btn compact" id="addTaskBtn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span data-i18n="task.new">Nueva tarea</span>
+          <kbd class="kbd" aria-hidden="true">N</kbd>
+        </button>
+      </div>
+    </header>
+
+    <!-- ══════════════ Main grid ══════════════ -->
+    <div class="grid">
+
+      <!-- ─────── Column A ─────── -->
+      <div class="col col-main">
+
+        <!-- Now instrument -->
+        <section class="now" id="nowPanel" data-active="false" aria-labelledby="nowTitle">
+          <span class="bracket bracket-tl" aria-hidden="true"></span>
+          <span class="bracket bracket-tr" aria-hidden="true"></span>
+          <span class="bracket bracket-bl" aria-hidden="true"></span>
+          <span class="bracket bracket-br" aria-hidden="true"></span>
+
+          <div class="now-head">
+            <span class="tag" id="nowStatusTag">
+              <span class="tag-led" aria-hidden="true"></span>
+              <span data-i18n="app.statusIdle">En reposo</span>
+            </span>
+            <span class="now-source mono" id="nowSource" hidden></span>
+          </div>
+
+          <div class="now-body">
+            <h1 class="now-title" id="nowTitle" data-i18n="app.statusIdle">En reposo</h1>
+            <div class="now-clock mono" id="nowClock" aria-label="Hora actual">--:--</div>
+          </div>
+
+          <div class="now-meta">
+            <span class="now-range mono" id="nowRange"></span>
+            <span class="now-remaining mono" id="nowRemaining"></span>
+          </div>
+
+          <div class="now-progress" id="nowProgress" hidden>
+            <div class="now-progress-track">
+              <div class="now-progress-fill" id="nowProgressFill" style="--p: 0"></div>
+            </div>
+          </div>
+
+          <div class="now-next" id="nowNext" hidden>
+            <span class="now-next-label mono" data-i18n="app.nextUp">Próxima</span>
+            <span class="now-next-sep" aria-hidden="true"></span>
+            <span class="now-next-text" id="nowNextText"></span>
+          </div>
+        </section>
+
+        <!-- Day timeline -->
+        <section class="panel timeline-panel" aria-labelledby="timelineTitle">
+          <div class="panel-head">
+            <h2 class="panel-title" id="timelineTitle" data-i18n="timeline.title">Línea del día</h2>
+            <span class="panel-note mono" id="timelineNote"></span>
+          </div>
+          <div class="timeline" id="timeline">
+            <div class="timeline-scale" id="timelineScale" aria-hidden="true"></div>
+            <div class="timeline-track" id="timelineTrack"></div>
+            <div class="timeline-now" id="timelineNow" style="--x: 0%">
+              <span class="timeline-now-label mono" data-i18n="timeline.now">Ahora</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tasks -->
+        <section class="panel tasks-panel" id="tasksPanel" aria-labelledby="tasksTitle">
+          <div class="panel-head">
+            <h2 class="panel-title" id="tasksTitle" data-i18n="tasks.title">Tareas</h2>
+            <span class="count-chip mono" id="taskCount">—</span>
+
+            <div class="panel-head-tools">
+              <div class="search" role="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+                </svg>
+                <input type="search" id="searchInput" class="search-input"
+                       data-i18n-placeholder="tasks.search" data-i18n-aria="tasks.searchLabel"
+                       placeholder="Buscar tareas…" autocomplete="off">
+                <kbd class="kbd search-kbd" aria-hidden="true">/</kbd>
+              </div>
+
+              <div class="segmented" role="group" id="scopeSwitch">
+                <button type="button" class="segmented-btn is-on" data-scope="today" data-i18n="tasks.filterToday">Hoy</button>
+                <button type="button" class="segmented-btn" data-scope="all" data-i18n="tasks.filterAll">Todas</button>
+                <span class="segmented-thumb" aria-hidden="true"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tasks-list" id="tasksList" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <!-- ─────── Column B ─────── -->
+      <aside class="col col-side">
+
+        <!-- Device -->
+        <section class="panel device-panel" aria-labelledby="deviceTitle">
+          <div class="panel-head">
+            <h2 class="panel-title" id="deviceTitle" data-i18n="device.title">Dispositivo</h2>
+            <button class="ghost-btn tiny" id="devRefreshBtn" type="button" data-i18n="device.refresh">Refrescar ahora</button>
+          </div>
+
+          <figure class="eink">
+            <div class="eink-bezel">
+              <img class="eink-img" id="einkPreview" alt="" width="250" height="128">
+              <span class="eink-sheen" aria-hidden="true"></span>
+            </div>
+            <figcaption class="eink-caption mono">
+              <span data-i18n="device.screen">Pantalla e-ink</span>
+              <span class="dot-sep" aria-hidden="true"></span>
+              <span data-i18n="device.screenHint">Vista en vivo · 250 × 128 px</span>
+            </figcaption>
+          </figure>
+
+          <dl class="readouts">
+            <div class="readout">
+              <dt class="mono" data-i18n="device.led">LED RGB</dt>
+              <dd>
+                <span class="led-chip" id="ledChip" data-on="false">
+                  <span class="led-chip-dot" aria-hidden="true"></span>
+                  <span class="led-chip-text mono" id="ledChipText" data-i18n="device.ledOff">Apagado</span>
+                </span>
+              </dd>
+            </div>
+            <div class="readout">
+              <dt class="mono" data-i18n="device.scheduler">Planificador</dt>
+              <dd><span class="mono readout-value" id="schedulerState">—</span></dd>
+            </div>
+          </dl>
+        </section>
+
+        <!-- Calendars -->
+        <section class="panel calendars-panel" aria-labelledby="calendarsTitle">
+          <div class="panel-head">
+            <h2 class="panel-title" id="calendarsTitle" data-i18n="calendar.title">Calendarios</h2>
+            <button class="ghost-btn tiny" id="syncCalendarsBtn" type="button" data-i18n="calendar.syncNow">Sincronizar</button>
+          </div>
+          <p class="panel-sub" data-i18n="calendar.subtitle">Google Calendar y cualquier feed iCal</p>
+
+          <div class="calendar-list" id="calendarList"></div>
+
+          <button class="dashed-btn" id="addCalendarBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 10h18"/>
+              <path d="M12 13.5v5M9.5 16h5"/>
+            </svg>
+            <span data-i18n="calendar.add">Conectar calendario</span>
+          </button>
+        </section>
+
+        <!-- Settings -->
+        <section class="panel settings-panel">
+          <details class="settings" id="settingsDetails">
+            <summary class="settings-summary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3.2"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+              <span class="panel-title" data-i18n="settings.title">Ajustes</span>
+              <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+            </summary>
+
+            <div class="settings-body">
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="brightness" class="field-label" data-i18n="settings.ledBrightness">Brillo del LED</label>
+                  <span class="field-value mono" id="brightnessValue">100%</span>
+                </div>
+                <input type="range" id="brightness" class="slider" min="0" max="100" value="100"
+                       data-i18n-aria="settings.ledBrightness">
+              </div>
+
+              <div class="field">
+                <label for="timezone" class="field-label" data-i18n="settings.timezone">Zona horaria</label>
+                <div class="select-wrap">
+                  <select id="timezone" class="select"></select>
+                  <svg class="select-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                </div>
+                <span class="dst" id="dstIndicator" hidden></span>
+              </div>
+
+              <div class="field-grid-2">
+                <div class="field">
+                  <label for="timeFormat" class="field-label" data-i18n="settings.timeFormat">Formato de hora</label>
+                  <div class="select-wrap">
+                    <select id="timeFormat" class="select">
+                      <option value="24" data-i18n-option="settings.timeFormat24">24 horas</option>
+                      <option value="12" data-i18n-option="settings.timeFormat12">12 horas (AM/PM)</option>
+                    </select>
+                    <svg class="select-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="language" class="field-label" data-i18n="settings.language">Idioma</label>
+                  <div class="select-wrap">
+                    <select id="language" class="select">
+                      <option value="es" data-i18n-option="settings.languageEs">Español</option>
+                      <option value="en" data-i18n-option="settings.languageEn">English</option>
+                    </select>
+                    <svg class="select-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="syncInterval" class="field-label" data-i18n="settings.syncInterval">Sincronizar calendarios cada</label>
+                <div class="select-wrap">
+                  <select id="syncInterval" class="select">
+                    <option value="5">5 min</option>
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">60 min</option>
+                    <option value="180">180 min</option>
+                  </select>
+                  <svg class="select-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                </div>
+              </div>
+
+              <button class="primary-btn full" id="saveConfigBtn" type="button" data-i18n="settings.save">Guardar ajustes</button>
+            </div>
+          </details>
+        </section>
+
+        <footer class="foot mono">
+          <a class="foot-link" href="https://nolmedo.dev/" target="_blank" rel="noopener noreferrer">nolmedo.dev</a>
+          <span class="dot-sep" aria-hidden="true"></span>
+          <span>DAILY TASKS</span>
+          <span class="dot-sep" aria-hidden="true"></span>
+          <span class="foot-keys">
+            <kbd class="kbd">N</kbd><kbd class="kbd">/</kbd><kbd class="kbd">R</kbd>
+          </span>
+        </footer>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Mobile compose button -->
+  <button class="fab" id="fabBtn" type="button" data-i18n-aria="task.new" aria-label="Nueva tarea">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14"/>
+    </svg>
+  </button>
+
+  <!-- ══════════════ Task sheet ══════════════ -->
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sheet" id="taskSheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <header class="sheet-head">
+      <h3 class="sheet-title" id="sheetTitle" data-i18n="task.new">Nueva tarea</h3>
+      <button class="icon-btn" id="closeSheetBtn" type="button" data-i18n-aria="task.close" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </header>
+
+    <form id="taskForm" class="sheet-body" novalidate>
+      <input type="hidden" id="taskId" value="">
+
+      <div class="field">
+        <label for="taskName" class="field-label" data-i18n="task.name">Nombre</label>
+        <input type="text" id="taskName" class="input"
+               data-i18n-placeholder="task.namePlaceholder"
+               placeholder="p. ej. Trabajo profundo" required maxlength="80" autocomplete="off">
+      </div>
+
+      <label class="switch">
+        <input type="checkbox" id="allDayCheck">
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+        <span class="switch-text" data-i18n="task.allDay">Todo el día</span>
+      </label>
+
+      <div class="time-row" id="timeRow">
+        <div class="field">
+          <label for="startTime" class="field-label" data-i18n="task.from">Desde</label>
+          <input type="time" id="startTime" class="input mono" required>
+        </div>
+        <span class="time-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+        </span>
+        <div class="field">
+          <label for="endTime" class="field-label" data-i18n="task.to">Hasta</label>
+          <input type="time" id="endTime" class="input mono" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <span class="field-label" data-i18n="task.activeDays">Días activos</span>
+          <span class="day-presets">
+            <button type="button" class="pill-btn" data-days="all" data-i18n="task.selectAllDays">Todos</button>
+            <button type="button" class="pill-btn" data-days="weekdays" data-i18n="task.selectWeekdays">L–V</button>
+            <button type="button" class="pill-btn" data-days="weekend" data-i18n="task.selectWeekend">S–D</button>
+          </span>
+        </div>
+        <div class="days" id="dayPicker">
+          <label class="day"><input type="checkbox" name="activeDays" value="1" checked><span data-i18n="days.letter.1">L</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="2" checked><span data-i18n="days.letter.2">M</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="3" checked><span data-i18n="days.letter.3">X</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="4" checked><span data-i18n="days.letter.4">J</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="5" checked><span data-i18n="days.letter.5">V</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="6" checked><span data-i18n="days.letter.6">S</span></label>
+          <label class="day"><input type="checkbox" name="activeDays" value="0" checked><span data-i18n="days.letter.0">D</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label" data-i18n="task.ledColor">Color del LED</span>
+        <div class="color-row">
+          <label class="swatch" id="colorSwatch">
+            <input type="color" id="ledColorPicker" value="#5ad1c4" aria-label="LED">
+            <span class="swatch-ring" aria-hidden="true"></span>
+          </label>
+          <span class="swatch-value mono" id="colorValue">#5AD1C4</span>
+          <div class="swatch-presets" id="colorPresets"></div>
+          <button type="button" class="toggle" id="ledOffBtn" data-on="false">
+            <span class="toggle-dot" aria-hidden="true"></span>
+            <span class="toggle-text" data-i18n="task.ledOff">Apagar LED</span>
+          </button>
+        </div>
+        <input type="hidden" id="ledColor" value="90,209,196">
+      </div>
+
+      <p class="form-hint" id="formHint" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="button" class="ghost-btn" id="cancelSheetBtn" data-i18n="task.cancel">Cancelar</button>
+        <button type="submit" class="primary-btn" data-i18n="task.save">Guardar tarea</button>
+      </div>
+    </form>
+  </aside>
+
+  <!-- ══════════════ Calendar sheet ══════════════ -->
+  <aside class="sheet" id="calendarSheet" role="dialog" aria-modal="true" aria-labelledby="calSheetTitle" hidden>
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <header class="sheet-head">
+      <h3 class="sheet-title" id="calSheetTitle" data-i18n="calendar.addTitle">Conectar un calendario</h3>
+      <button class="icon-btn" id="closeCalSheetBtn" type="button" data-i18n-aria="task.close" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </header>
+
+    <form id="calendarForm" class="sheet-body" novalidate>
+      <div class="field">
+        <label for="calUrl" class="field-label" data-i18n="calendar.urlLabel">Dirección iCal (.ics)</label>
+        <input type="url" id="calUrl" class="input mono small"
+               data-i18n-placeholder="calendar.urlPlaceholder"
+               placeholder="https://calendar.google.com/…/basic.ics" required autocomplete="off" spellcheck="false">
+      </div>
+
+      <details class="helper">
+        <summary data-i18n="calendar.help">¿Cómo obtengo la dirección?</summary>
+        <p class="helper-body" data-i18n-html="calendar.helpSteps"></p>
+        <p class="helper-warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+          </svg>
+          <span data-i18n="calendar.helpWarning"></span>
+        </p>
+      </details>
+
+      <div class="field">
+        <label for="calName" class="field-label" data-i18n="calendar.nameLabel">Nombre (opcional)</label>
+        <input type="text" id="calName" class="input"
+               data-i18n-placeholder="calendar.namePlaceholder" placeholder="Se toma del calendario"
+               maxlength="60" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <span class="field-label" data-i18n="calendar.colorLabel">Color del LED para sus eventos</span>
+        <div class="color-row">
+          <label class="swatch" id="calColorSwatch">
+            <input type="color" id="calColorPicker" value="#e0a34a" aria-label="LED">
+            <span class="swatch-ring" aria-hidden="true"></span>
+          </label>
+          <span class="swatch-value mono" id="calColorValue">#E0A34A</span>
+          <button type="button" class="toggle" id="calLedOffBtn" data-on="false">
+            <span class="toggle-dot" aria-hidden="true"></span>
+            <span class="toggle-text" data-i18n="task.ledOff">Apagar LED</span>
+          </button>
+        </div>
+      </div>
+
+      <p class="form-hint" id="calFormHint" hidden></p>
+
+      <div class="sheet-actions">
+        <button type="button" class="ghost-btn" id="cancelCalSheetBtn" data-i18n="task.cancel">Cancelar</button>
+        <button type="submit" class="primary-btn" id="calSubmitBtn" data-i18n="calendar.connect">Conectar</button>
+      </div>
+    </form>
+  </aside>
+
+  <!-- Toasts -->
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
