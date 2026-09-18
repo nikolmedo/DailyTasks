@@ -35,7 +35,7 @@ the renderer never looks up a translation.
 
 ---
 
-## The three layout rules
+## The layout rules
 
 1. **Nothing is ever clipped.** Every string goes through `fit_line()` (shrink then
    ellipsise) or `fit_block()` (shrink → wrap → hard-break long words → ellipsise). If
@@ -51,13 +51,23 @@ the renderer never looks up a translation.
    above); the progress bar and remaining-time text both derive from the same
    10-minute bucket in `display-controller.js`, so the frame stays byte-identical
    between steps and a run of no-op renders never reaches the hardware.
+5. **Any row mixing fonts or strings aligns on a shared baseline, not shared tops.**
+   Two strings top-aligned to the same `y` only look aligned when both bounding boxes
+   happen to match — an accented capital (Ó, É) grows a string's bbox upward, so
+   `"PRÓXIMA"` top-aligned next to `"18:00"` visibly drops below it. `draw_baseline()`
+   / `tracked_baseline()` use `font_metrics()` (constant per font+size, from
+   `ImageFont.getmetrics()`) instead of `textbbox()` (varies with the string's own
+   glyphs), so mixed fonts and accents land on one line. `draw_line_at()` /
+   `tracked_text()` still exist for the single-font, single-string cases (the title,
+   the corner source tag) where that concern does not apply — don't reach for them on
+   a row with more than one text element.
 
 Layout constants at the top of the file: `WIDTH`, `HEIGHT`, `PAD = 6`, `HEADER_H = 22`,
 `CHAMFER = 9`, and the four DejaVu font paths (sans/mono × regular/bold).
 
-Drawing helpers worth reusing instead of re-inventing: `tracked_text` (letter-spaced
-text), `fit_tracked`, `corner_brackets`, `dotted_rule`, `split_rule`, `arrow`,
-`progress_bar`.
+Drawing helpers worth reusing instead of re-inventing: `draw_baseline` / `tracked_baseline`
+(baseline-aligned text, letter-spaced or not), `font_metrics`, `fit_tracked`,
+`corner_brackets`, `dotted_rule`, `split_rule`, `arrow`, `progress_bar`.
 
 ---
 

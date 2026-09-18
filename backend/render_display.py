@@ -191,6 +191,47 @@ def draw_line_at(draw, text, fnt, x, y, fill=BLACK):
     return box[2] - box[0]
 
 
+def font_metrics(fnt):
+    """(ascent, descent) for a font — constant per font+size, unlike a string's
+    own bounding box, which grows upward for an accented capital (Ó, Á) and
+    shrinks for one without. Baseline alignment across strings needs this, not
+    textbbox."""
+    try:
+        return fnt.getmetrics()
+    except AttributeError:
+        size = getattr(fnt, "size", 10)
+        return (size, max(1, size // 4))
+
+
+def draw_baseline(draw, text, fnt, x, baseline, fill=BLACK):
+    """
+    Draw text with its typographic baseline at `baseline`.
+
+    Two strings in different fonts — or the same font with and without an
+    accented capital — land on the same line, which top-aligning their own
+    bounding boxes cannot guarantee (PRÓXIMA's accent pushes its bbox top
+    above a plain string's, so top-aligning both drops PRÓXIMA's letters
+    below the other string's).
+    """
+    if not text:
+        return 0
+    draw.text((x, baseline), text, font=fnt, fill=fill, anchor="ls")
+    return text_width(draw, text, fnt)
+
+
+def tracked_baseline(draw, text, fnt, x, baseline, tracking=1, fill=BLACK):
+    """Letter-spaced text, baseline-aligned — the tracked counterpart of
+    draw_baseline(). Safe with accented capitals: every glyph sits on the same
+    baseline regardless of its own bounding box."""
+    if not text:
+        return 0
+    cursor = x
+    for char in text:
+        draw.text((cursor, baseline), char, font=fnt, fill=fill, anchor="ls")
+        cursor += draw.textlength(char, font=fnt) + tracking
+    return cursor - x - tracking
+
+
 def tracked_text(draw, text, fnt, x, y, tracking=1, fill=BLACK):
     """
     Draw text with extra letter spacing — reads as 'technical' on e-ink.
@@ -354,14 +395,27 @@ def draw_header(draw, data):
     label_font = font(FONT_MONO_BOLD, 10)
     date_font = font(FONT_MONO_BOLD, 11)
 
+    # One shared baseline for both strings. Top-aligning each string's own
+    # bounding box instead — as a naive draw_line_at/tracked_text pairing would —
+    # breaks the moment either string's accents differ from the other's (a plain
+    # status label next to a date like "MIÉ", whose É sits taller than a bare M).
+    label_ascent, label_descent = font_metrics(label_font)
+    date_ascent, date_descent = font_metrics(date_font)
+    ascent = max(label_ascent, date_ascent)
+    descent = max(label_descent, date_descent)
+    baseline = (HEADER_H - ascent - descent) // 2 + ascent
+
     # Live marker: a filled block for an active task, a hollow one when idle
-    marker_x, marker_y = PAD, 6
+    marker_x = PAD
+    marker_y = baseline - ascent
+    marker_h = ascent + descent - 1
     if data.get("state") == "active":
-        draw.rectangle([marker_x, marker_y, marker_x + 3, marker_y + 9], fill=WHITE)
+        draw.rectangle([marker_x, marker_y, marker_x + 3, marker_y + marker_h], fill=WHITE)
     else:
-        draw.rectangle([marker_x, marker_y, marker_x + 3, marker_y + 9], outline=WHITE, width=1)
-        draw.point((marker_x + 1, marker_y + 4), fill=WHITE)
-        draw.point((marker_x + 2, marker_y + 5), fill=WHITE)
+        draw.rectangle([marker_x, marker_y, marker_x + 3, marker_y + marker_h], outline=WHITE, width=1)
+        mid = marker_y + marker_h // 2
+        draw.point((marker_x + 1, mid), fill=WHITE)
+        draw.point((marker_x + 2, mid + 1), fill=WHITE)
 
     date_text = (data.get("dateText") or "").upper()
     date_w = tracked_width(draw, date_text, date_font, 1) if date_text else 0
@@ -369,10 +423,10 @@ def draw_header(draw, data):
 
     label_max = (date_x if date_text else WIDTH - PAD - CHAMFER) - (marker_x + 8) - 8
     label = fit_tracked(draw, (data.get("statusLabel") or "").upper(), label_font, label_max, tracking=1)
-    tracked_text(draw, label, label_font, marker_x + 8, 7, tracking=1, fill=WHITE)
+    tracked_baseline(draw, label, label_font, marker_x + 8, baseline, tracking=1, fill=WHITE)
 
     if date_text:
-        tracked_text(draw, date_text, date_font, date_x, 6, tracking=1, fill=WHITE)
+        tracked_baseline(draw, date_text, date_font, date_x, baseline, tracking=1, fill=WHITE)
 
 
 def draw_footer(draw, data, top):
@@ -402,10 +456,16 @@ def draw_footer(draw, data, top):
 
         draw.rectangle([inner_x0, y, chip_x1, y + chip_h], outline=BLACK, width=1)
         draw.rectangle([inner_x0, y, inner_x0 + 2, y + chip_h], fill=BLACK)
-        draw_line_at(draw, label, time_font, inner_x0 + 7, y + 3)
+
+        # One baseline for the chip label and the remaining-time text — they are
+        # different fonts, so top-aligning each string's own bbox (as before)
+        # let accents or size differences knock one off the other's line.
+        chip_ascent, chip_descent = font_metrics(time_font)
+        baseline = y + (chip_h - chip_ascent - chip_descent) // 2 + chip_ascent
+        draw_baseline(draw, label, time_font, inner_x0 + 7, baseline)
 
         if remaining:
-            tracked_text(draw, remaining, small_font, inner_x1 - rem_w, y + 5, tracking=1)
+            tracked_baseline(draw, remaining, small_font, inner_x1 - rem_w, baseline, tracking=1)
 
         y += chip_h + 6
 
@@ -418,18 +478,29 @@ def draw_footer(draw, data, top):
         next_label_font = font(FONT_MONO_BOLD, 9)
         next_font = font(FONT_MONO, 10)
 
+        # Shared baseline again: the arrow, the "NEXT" label and the value text
+        # all key off it so the row reads as one line instead of three floating
+        # pieces at slightly different heights.
+        label_ascent, label_descent = font_metrics(next_label_font)
+        value_ascent, value_descent = font_metrics(next_font)
+        ascent = max(label_ascent, value_ascent)
+        descent = max(label_descent, value_descent)
+        baseline = y + ascent
+        row_bottom = baseline + descent
+
         cursor = inner_x0
-        cursor += arrow(draw, cursor, y + 5, size=5) + 4
+        arrow_cy = baseline - ascent // 2
+        cursor += arrow(draw, cursor, arrow_cy, size=5) + 4
 
         label = (data.get("nextLabel") or "").upper()
         if label:
             cursor += tracked_width(draw, label, next_label_font, 1)
-            tracked_text(draw, label, next_label_font, inner_x0 + 9, y + 1, tracking=1)
+            tracked_baseline(draw, label, next_label_font, inner_x0 + 9, baseline, tracking=1)
             cursor += 6
-            draw.line([(cursor - 3, y), (cursor - 3, y + 10)], fill=BLACK)
+            draw.line([(cursor - 3, y), (cursor - 3, row_bottom)], fill=BLACK)
 
         text = fit_line(draw, next_text, next_font, inner_x1 - cursor)
-        draw_line_at(draw, text, next_font, cursor, y)
+        draw_baseline(draw, text, next_font, cursor, baseline)
 
 
 def footer_height(data):
@@ -440,7 +511,10 @@ def footer_height(data):
     if isinstance(data.get("progress"), (int, float)):
         height += 11
     if data.get("nextText"):
-        height += 12
+        # Matches the baseline math in draw_footer: ascent(10) + descent(3)
+        label_ascent, label_descent = font_metrics(font(FONT_MONO_BOLD, 9))
+        value_ascent, value_descent = font_metrics(font(FONT_MONO, 10))
+        height += max(label_ascent, value_ascent) + max(label_descent, value_descent)
     return height
 
 
