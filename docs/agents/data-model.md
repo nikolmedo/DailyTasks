@@ -38,6 +38,7 @@ CREATE TABLE calendar_events (                    -- cache of expanded occurrenc
   uid          TEXT NOT NULL,                     -- source VEVENT uid (not unique: recurrences)
   title        TEXT NOT NULL,                     -- trimmed to 200 chars, "—" when empty
   location     TEXT,                              -- trimmed to 200 chars
+  description  TEXT,                              -- trimmed to 2000 chars; may be HTML (Google)
   start_utc    TEXT NOT NULL,                     -- ISO UTC; all-day ⇒ bare date at UTC midnight
   end_utc      TEXT NOT NULL,                     -- iCalendar DTEND is exclusive
   all_day      INTEGER NOT NULL DEFAULT 0

@@ -11,6 +11,7 @@
 
 const IcalExpander = require('ical-expander');
 const db = require('./database');
+const events = require('./events');
 
 // How far around "now" we expand recurring events, in days
 const WINDOW_BACK_DAYS = 2;
@@ -120,7 +121,7 @@ function expandFeed(icsText) {
   const rows = [];
   const seen = new Set();
 
-  const push = (uid, title, location, startDate, endDate) => {
+  const push = (uid, title, location, description, startDate, endDate) => {
     if (rows.length >= MAX_OCCURRENCES) return;
     const range = toStoredRange(startDate, endDate);
     // A recurring event and its override can resolve to the same slot
@@ -131,16 +132,17 @@ function expandFeed(icsText) {
       uid,
       title: (title || '').trim().slice(0, 200) || '—',
       location: location ? String(location).trim().slice(0, 200) : null,
+      description: description ? String(description).trim().slice(0, 2000) : null,
       ...range
     });
   };
 
   for (const e of events) {
-    push(e.uid, e.summary, e.location, e.startDate, e.endDate);
+    push(e.uid, e.summary, e.location, e.description, e.startDate, e.endDate);
   }
   for (const o of occurrences) {
     const item = o.item;
-    push(item.uid, item.summary, item.location, o.startDate, o.endDate);
+    push(item.uid, item.summary, item.location, item.description, o.startDate, o.endDate);
   }
 
   rows.sort((a, b) => a.start_utc.localeCompare(b.start_utc));
@@ -194,6 +196,7 @@ async function syncAll() {
       results.push(await syncCalendar(cal));
     }
     lastSyncAt = new Date().toISOString();
+    events.emit('calendars');
     return results;
   } finally {
     syncing = false;

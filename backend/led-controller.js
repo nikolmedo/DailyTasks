@@ -71,6 +71,9 @@ function applyBrightness(rgb, brightness) {
 // Only one runs at a time and a newer colour replaces a queued one — the last
 // value is the only one that matters.
 let applying = false;
+// What the LED was last asked to show, for the web panel's device readout
+let lastState = { on: false, color: null, brightness: 0 };
+
 let pendingCommand = null;
 
 /**
@@ -120,6 +123,9 @@ function setLED(colorString, brightness = 100) {
   }
 
   const color = parseColor(colorString);
+  lastState = color
+    ? { on: true, color: `${color.r},${color.g},${color.b}`, brightness }
+    : { on: false, color: null, brightness: 0 };
 
   if (!color) {
     console.log('📴 Turning off LED');
@@ -147,8 +153,16 @@ function isLEDAvailable() {
   return checkLEDHardware();
 }
 
+/**
+ * @returns {{on: boolean, color: string|null, brightness: number}}
+ */
+function getLedState() {
+  return { ...lastState };
+}
+
 module.exports = {
   setLED,
+  getLedState,
   turnOffLED,
   parseColor,
   applyBrightness,

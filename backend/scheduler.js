@@ -11,6 +11,7 @@ const db = require('./database');
 const agenda = require('./agenda');
 const ledController = require('./led-controller');
 const displayController = require('./display-controller');
+const events = require('./events');
 
 let schedulerJob = null;
 let lastSnapshot = null;
@@ -63,6 +64,7 @@ function schedulerTick(opts = {}) {
     const task = active && active.source === 'task' ? db.getTaskById(active.id) : null;
     displayController.showSnapshot(snapshot, config, task, { force });
 
+    events.emit('status');
     return snapshot;
   } catch (error) {
     console.error('❌ Scheduler error:', error.message);
@@ -116,6 +118,9 @@ function getStatus() {
 
   return {
     currentTime: snapshot.currentTime,
+    // Server wall clock, so the panel can tick its own clock without drifting
+    // from the device when the browser's clock is off
+    epoch: Date.now(),
     date: snapshot.date,
     timezone,
     activeTask: serialiseSlot(snapshot.active),
@@ -124,7 +129,11 @@ function getStatus() {
     remainingMinutes: snapshot.remaining,
     agenda: snapshot.slots.map(serialiseSlot),
     schedulerRunning: schedulerJob !== null,
-    ledAvailable: ledController.isLEDAvailable()
+    ledAvailable: ledController.isLEDAvailable(),
+    device: {
+      led: ledController.getLedState(),
+      display: displayController.getDisplayState()
+    }
   };
 }
 

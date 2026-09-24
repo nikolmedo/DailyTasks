@@ -73,11 +73,12 @@ Per-calendar sync result: `{ id, name, ok, count, error? }`.
 |---|---|---|
 | `GET` | `/api/agenda?date=YYYY-MM-DD` | Merged day. Defaults to today in the configured zone. Invalid date ⇒ `400`. Includes done tasks (`includeDone: true`) |
 | `GET` | `/api/config` | Flat `{ key: value }` map, all values are strings |
-| `PUT` | `/api/config` | Partial update; every supplied key is validated then written. Calls `forceUpdate({force:true})` |
+| `PUT` | `/api/config` | Partial update; every supplied key is validated then written. Calls `forceUpdate()` **unforced**, so a brightness change drives the LED without a full e-ink flash (the panel still redraws when its frame changes, e.g. language) |
 | `GET` | `/api/status` | The device snapshot (below) |
 | `GET` | `/api/display/preview.png` | The exact frame last rendered for the panel. `Cache-Control: no-store`; `404` before the first render |
 | `POST` | `/api/refresh` | Full refresh of display + LED |
 | `GET` | `/api/health` | `{ success, status: "ok", timestamp }` |
+| `GET` | `/api/events` | Server-Sent Events stream of change notifications (below) |
 
 `GET /api/agenda` response: `{ data: { date, timezone, slots: Slot[] } }`.
 
@@ -105,9 +106,20 @@ after the first failure:
   "remainingMinutes": 54,
   "agenda": Slot[],                  // the whole day
   "schedulerRunning": true,
-  "ledAvailable": true
+  "ledAvailable": true,
+  "epoch": 1790290634541,            // server Date.now(); the panel ticks its clock from it
+  "device": {
+    "led": { "on": true, "color": "0,30,255", "brightness": 80 },   // last value sent to the LED
+    "display": { "lastRenderAt": ISO | null, "lastPushAt": ISO | null } // PNG written / panel changed
+  }
 }
 ```
+
+`GET /api/events` — `text/event-stream`. Each message is `event: <topic>` with
+`data: {"topic", "at", ...}`; clients re-fetch the matching resource, no payload travels.
+Topics come from `backend/events.js`: `status` (every scheduler tick), `tasks`, `calendars`
+(mutations and finished syncs), `config`, `frame` (new preview PNG). A `: ping` comment is
+sent every 25 s. Emit a topic with `events.emit(topic)` when you add a mutation.
 
 `Slot` is documented in [data-model.md](data-model.md#slot-object).
 

@@ -85,6 +85,8 @@ function initDatabase() {
     )
   `);
 
+  migrate(`ALTER TABLE calendar_events ADD COLUMN description TEXT`, 'calendar_events.description column');
+
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_window ON calendar_events (start_utc, end_utc)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_calendar ON calendar_events (calendar_id)`);
 
@@ -170,8 +172,8 @@ function initStatements() {
   deleteEventsForCalendar = db.prepare('DELETE FROM calendar_events WHERE calendar_id = ?');
   deleteAllEvents = db.prepare('DELETE FROM calendar_events');
   insertEvent = db.prepare(`
-    INSERT INTO calendar_events (calendar_id, uid, title, location, start_utc, end_utc, all_day)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO calendar_events (calendar_id, uid, title, location, description, start_utc, end_utc, all_day)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   getEventsInRange = db.prepare(`
     SELECT e.*, c.name AS calendar_name, c.led_color AS calendar_color
@@ -274,6 +276,7 @@ module.exports = {
         e.uid,
         e.title,
         e.location || null,
+        e.description || null,
         e.start_utc,
         e.end_utc,
         e.all_day ? 1 : 0

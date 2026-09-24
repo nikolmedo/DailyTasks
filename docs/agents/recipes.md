@@ -36,7 +36,8 @@ Frontend-only edits need no restart — the files are served statically.
 3. Consumer: `scheduler.js` / `display-controller.js` / `calendar-sync.js` reads it from
    `db.getAllConfig()` or `db.getConfig()`. Remember values are **strings**.
 4. `frontend/index.html` → the control with an `id`; `frontend/app.js` → `el` entry,
-   `syncConfigUI()` (read) and `saveConfig()` (write).
+   `syncConfigUI()` (read) and a `change` listener calling `saveConfig({ key: value })`
+   (settings autosave — there is no save button).
 5. Strings → both catalogs. Restart.
 6. Document it in [data-model.md](data-model.md#config-keys) and in the README settings list.
 
