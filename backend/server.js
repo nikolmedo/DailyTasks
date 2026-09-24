@@ -12,6 +12,7 @@ const agenda = require('./agenda');
 const calendarSync = require('./calendar-sync');
 const displayController = require('./display-controller');
 const i18n = require('./i18n');
+const events = require('./events');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -96,6 +97,7 @@ app.post('/api/tasks', (req, res) => {
       all_day: all_day ? 1 : 0
     });
 
+    events.emit('tasks');
     scheduler.forceUpdate();
     res.status(201).json({ success: true, data: task });
   } catch (error) {
@@ -123,6 +125,7 @@ app.put('/api/tasks/:id', (req, res) => {
       all_day: all_day ? 1 : 0
     });
 
+    events.emit('tasks');
     scheduler.forceUpdate();
     res.json({ success: true, data: task });
   } catch (error) {
@@ -137,6 +140,7 @@ app.patch('/api/tasks/:id/done', (req, res) => {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }
     const updated = db.toggleTaskDone(req.params.id);
+    events.emit('tasks');
     scheduler.forceUpdate();
     res.json({ success: true, data: updated });
   } catch (error) {
@@ -152,6 +156,7 @@ app.delete('/api/tasks/:id', (req, res) => {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }
     db.deleteTask(req.params.id);
+    events.emit('tasks');
     scheduler.forceUpdate();
     // Echoed back so the client can offer an undo without a second round trip
     res.json({ success: true, data: task, message: 'Task deleted successfully' });
@@ -215,6 +220,7 @@ app.post('/api/calendars', async (req, res) => {
     });
 
     await calendarSync.syncCalendar(calendar);
+    events.emit('calendars');
     scheduler.forceUpdate();
 
     res.status(201).json({ success: true, data: db.getCalendarById(calendar.id) });
@@ -242,6 +248,7 @@ app.put('/api/calendars/:id', (req, res) => {
       enabled: enabled === undefined ? existing.enabled : (enabled ? 1 : 0)
     });
 
+    events.emit('calendars');
     scheduler.forceUpdate();
     res.json({ success: true, data: calendar });
   } catch (error) {
@@ -256,6 +263,7 @@ app.delete('/api/calendars/:id', (req, res) => {
       return res.status(404).json({ success: false, error: 'Calendar not found' });
     }
     db.deleteCalendar(req.params.id);
+    events.emit('calendars');
     scheduler.forceUpdate();
     res.json({ success: true, message: 'Calendar removed' });
   } catch (error) {
@@ -361,7 +369,10 @@ app.put('/api/config', (req, res) => {
       db.updateConfig(key, String(updates[key]));
     });
 
-    scheduler.forceUpdate({ force: true });
+    // Not forced: the e-ink panel only redraws when the frame actually changes,
+    // so dragging the brightness slider drives the LED without flashing the panel.
+    events.emit('config');
+    scheduler.forceUpdate();
     res.json({ success: true, data: db.getAllConfig() });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -403,6 +414,33 @@ app.post('/api/refresh', (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+/**
+ * LIVE UPDATES
+ */
+
+// GET /api/events - Server-Sent Events stream of change notifications (see events.js)
+app.get('/api/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-store',
+    'Connection': 'keep-alive',
+    // Stop reverse proxies from buffering the stream
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('retry: 5000\n\n');
+
+  const unsubscribe = events.subscribe((event) => {
+    res.write(`event: ${event.topic}\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+  // Comment lines keep idle connections from being dropped by proxies
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
 });
 
 /**

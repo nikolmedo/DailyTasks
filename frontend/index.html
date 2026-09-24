@@ -3,13 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0c0e">
+  <meta name="theme-color" content="#0b0c0e" id="themeColor">
   <meta name="description" content="Panel de control de Daily Tasks para dispositivos Distiller">
   <title>Daily Tasks</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="fonts/fonts.css">
   <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0c0e'/><rect x='6' y='7' width='20' height='5' fill='%23e8e4d9'/><rect x='6' y='15' width='13' height='3' fill='%236b7076'/><rect x='6' y='21' width='17' height='3' fill='%236b7076'/></svg>">
 </head>
 <body>
@@ -22,7 +24,13 @@
   </div>
   <div class="grain" aria-hidden="true"></div>
 
-  <a class="skip-link" href="#tasksPanel">Ir a las tareas</a>
+  <a class="skip-link" href="#tasksPanel" data-i18n="app.skipToTasks">Ir a las tareas</a>
+
+  <!-- Shown on every screen size while the device cannot be reached -->
+  <div class="offline-bar" id="offlineBar" role="alert" hidden>
+    <span class="offline-dot" aria-hidden="true"></span>
+    <span data-i18n="app.offlineRetry">Sin conexión con el dispositivo · reintentando…</span>
+  </div>
 
   <div class="shell">
 
@@ -52,7 +60,7 @@
             <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/>
           </svg>
         </button>
-        <button class="primary-btn compact" id="addTaskBtn" type="button">
+        <button class="primary-btn compact topbar-add" id="addTaskBtn" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14"/>
           </svg>
@@ -85,7 +93,7 @@
 
           <div class="now-body">
             <h1 class="now-title" id="nowTitle" data-i18n="app.statusIdle">En reposo</h1>
-            <div class="now-clock mono" id="nowClock" aria-label="Hora actual">--:--</div>
+            <div class="now-clock mono" id="nowClock" role="timer" data-i18n-aria="app.clockLabel" aria-label="Hora del dispositivo">--:--</div>
           </div>
 
           <div class="now-meta">
@@ -118,6 +126,7 @@
             <div class="timeline-now" id="timelineNow" style="--x: 0%">
               <span class="timeline-now-label mono" data-i18n="timeline.now">Ahora</span>
             </div>
+            <div class="timeline-tip mono" id="timelineTip" role="tooltip" hidden></div>
           </div>
         </section>
 
@@ -138,9 +147,9 @@
                 <kbd class="kbd search-kbd" aria-hidden="true">/</kbd>
               </div>
 
-              <div class="segmented" role="group" id="scopeSwitch">
-                <button type="button" class="segmented-btn is-on" data-scope="today" data-i18n="tasks.filterToday">Hoy</button>
-                <button type="button" class="segmented-btn" data-scope="all" data-i18n="tasks.filterAll">Todas</button>
+              <div class="segmented" role="group" id="scopeSwitch" data-i18n-aria="tasks.scopeLabel" aria-label="Filtrar tareas">
+                <button type="button" class="segmented-btn is-on" data-scope="today" aria-pressed="true" data-i18n="tasks.filterToday">Hoy</button>
+                <button type="button" class="segmented-btn" data-scope="all" aria-pressed="false" data-i18n="tasks.filterAll">Todas</button>
                 <span class="segmented-thumb" aria-hidden="true"></span>
               </div>
             </div>
@@ -157,18 +166,19 @@
         <section class="panel device-panel" aria-labelledby="deviceTitle">
           <div class="panel-head">
             <h2 class="panel-title" id="deviceTitle" data-i18n="device.title">Dispositivo</h2>
-            <button class="ghost-btn tiny" id="devRefreshBtn" type="button" data-i18n="device.refresh">Refrescar ahora</button>
           </div>
 
           <figure class="eink">
-            <div class="eink-bezel">
+            <div class="eink-bezel" id="einkBezel">
               <img class="eink-img" id="einkPreview" alt="" width="250" height="128">
+              <span class="eink-flash" aria-hidden="true"></span>
               <span class="eink-sheen" aria-hidden="true"></span>
             </div>
             <figcaption class="eink-caption mono">
               <span data-i18n="device.screen">Pantalla e-ink</span>
               <span class="dot-sep" aria-hidden="true"></span>
               <span data-i18n="device.screenHint">Vista en vivo · 250 × 128 px</span>
+              <span class="eink-status" id="einkStatus" aria-live="polite"></span>
             </figcaption>
           </figure>
 
@@ -183,8 +193,8 @@
               </dd>
             </div>
             <div class="readout">
-              <dt class="mono" data-i18n="device.scheduler">Planificador</dt>
-              <dd><span class="mono readout-value" id="schedulerState">—</span></dd>
+              <dt class="mono" data-i18n="device.display">Pantalla</dt>
+              <dd><span class="mono readout-value" id="displayState">—</span></dd>
             </div>
           </dl>
         </section>
@@ -223,6 +233,8 @@
             </summary>
 
             <div class="settings-body">
+              <p class="save-state mono" id="saveState" aria-live="polite" data-i18n="settings.autosave">Los cambios se guardan solos</p>
+
               <div class="field">
                 <div class="field-label-row">
                   <label for="brightness" class="field-label" data-i18n="settings.ledBrightness">Brillo del LED</label>
@@ -286,8 +298,6 @@
                   </svg>
                 </div>
               </div>
-
-              <button class="primary-btn full" id="saveConfigBtn" type="button" data-i18n="settings.save">Guardar ajustes</button>
             </div>
           </details>
         </section>
@@ -297,9 +307,9 @@
           <span class="dot-sep" aria-hidden="true"></span>
           <span>DAILY TASKS</span>
           <span class="dot-sep" aria-hidden="true"></span>
-          <span class="foot-keys">
-            <kbd class="kbd">N</kbd><kbd class="kbd">/</kbd><kbd class="kbd">R</kbd>
-          </span>
+          <button type="button" class="foot-keys" id="shortcutsBtn" data-i18n-aria="shortcuts.open" data-i18n-title="shortcuts.open" aria-label="Ver atajos de teclado">
+            <kbd class="kbd">N</kbd><kbd class="kbd">/</kbd><kbd class="kbd">R</kbd><kbd class="kbd">?</kbd>
+          </button>
         </footer>
       </aside>
     </div>
@@ -358,6 +368,11 @@
         </div>
       </div>
 
+      <p class="time-summary mono" id="timeSummary" aria-live="polite" hidden>
+        <span id="timeSummaryText"></span>
+        <span class="time-summary-warn" id="timeSummaryWarn" hidden></span>
+      </p>
+
       <div class="field">
         <div class="field-label-row">
           <span class="field-label" data-i18n="task.activeDays">Días activos</span>
@@ -379,27 +394,31 @@
       </div>
 
       <div class="field">
-        <span class="field-label" data-i18n="task.ledColor">Color del LED</span>
-        <div class="color-row">
+        <div class="field-label-row">
+          <span class="field-label" data-i18n="task.ledColor">Color del LED</span>
+          <label class="switch switch-sm">
+            <input type="checkbox" id="ledOnCheck" checked>
+            <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+            <span class="switch-text" data-i18n="task.ledActive">LED encendido</span>
+          </label>
+        </div>
+        <div class="color-row" id="colorRow">
           <label class="swatch" id="colorSwatch">
-            <input type="color" id="ledColorPicker" value="#5ad1c4" aria-label="LED">
+            <input type="color" id="ledColorPicker" value="#5ad1c4" data-i18n-aria="task.ledColor" aria-label="Color del LED">
             <span class="swatch-ring" aria-hidden="true"></span>
           </label>
           <span class="swatch-value mono" id="colorValue">#5AD1C4</span>
           <div class="swatch-presets" id="colorPresets"></div>
-          <button type="button" class="toggle" id="ledOffBtn" data-on="false">
-            <span class="toggle-dot" aria-hidden="true"></span>
-            <span class="toggle-text" data-i18n="task.ledOff">Apagar LED</span>
-          </button>
         </div>
         <input type="hidden" id="ledColor" value="90,209,196">
       </div>
 
-      <p class="form-hint" id="formHint" hidden></p>
+      <p class="form-hint" id="formHint" role="alert" hidden></p>
 
       <div class="sheet-actions">
         <button type="button" class="ghost-btn" id="cancelSheetBtn" data-i18n="task.cancel">Cancelar</button>
-        <button type="submit" class="primary-btn" data-i18n="task.save">Guardar tarea</button>
+        <button type="button" class="ghost-btn" id="duplicateTaskBtn" data-i18n="task.duplicateAction" hidden>Duplicar</button>
+        <button type="submit" class="primary-btn" id="taskSubmitBtn" data-i18n="task.save">Guardar tarea</button>
       </div>
     </form>
   </aside>
@@ -443,27 +462,84 @@
       </div>
 
       <div class="field">
-        <span class="field-label" data-i18n="calendar.colorLabel">Color del LED para sus eventos</span>
-        <div class="color-row">
+        <div class="field-label-row">
+          <span class="field-label" data-i18n="calendar.colorLabel">Color del LED para sus eventos</span>
+          <label class="switch switch-sm">
+            <input type="checkbox" id="calLedOnCheck" checked>
+            <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+            <span class="switch-text" data-i18n="task.ledActive">LED encendido</span>
+          </label>
+        </div>
+        <div class="color-row" id="calColorRow">
           <label class="swatch" id="calColorSwatch">
-            <input type="color" id="calColorPicker" value="#e0a34a" aria-label="LED">
+            <input type="color" id="calColorPicker" value="#e0a34a" data-i18n-aria="calendar.colorLabel" aria-label="Color del LED">
             <span class="swatch-ring" aria-hidden="true"></span>
           </label>
           <span class="swatch-value mono" id="calColorValue">#E0A34A</span>
-          <button type="button" class="toggle" id="calLedOffBtn" data-on="false">
-            <span class="toggle-dot" aria-hidden="true"></span>
-            <span class="toggle-text" data-i18n="task.ledOff">Apagar LED</span>
-          </button>
         </div>
       </div>
 
-      <p class="form-hint" id="calFormHint" hidden></p>
+      <p class="form-hint" id="calFormHint" role="alert" hidden></p>
 
       <div class="sheet-actions">
         <button type="button" class="ghost-btn" id="cancelCalSheetBtn" data-i18n="task.cancel">Cancelar</button>
         <button type="submit" class="primary-btn" id="calSubmitBtn" data-i18n="calendar.connect">Conectar</button>
       </div>
     </form>
+  </aside>
+
+  <!-- ══════════════ Calendar event detail ══════════════ -->
+  <aside class="sheet" id="eventSheet" role="dialog" aria-modal="true" aria-labelledby="eventTitle" hidden>
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <header class="sheet-head">
+      <h3 class="sheet-title" id="eventTitle">—</h3>
+      <button class="icon-btn" id="closeEventSheetBtn" type="button" data-i18n-aria="task.close" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+      <dl class="event-facts">
+        <div class="event-fact">
+          <dt class="field-label" data-i18n="event.when">Cuándo</dt>
+          <dd class="mono" id="eventWhen"></dd>
+        </div>
+        <div class="event-fact">
+          <dt class="field-label" data-i18n="event.calendar">Calendario</dt>
+          <dd id="eventCalendar"><span class="event-cal-dot" aria-hidden="true"></span><span id="eventCalendarName"></span></dd>
+        </div>
+        <div class="event-fact" id="eventLocationRow">
+          <dt class="field-label" data-i18n="event.location">Lugar</dt>
+          <dd id="eventLocation"></dd>
+        </div>
+        <div class="event-fact" id="eventDescriptionRow">
+          <dt class="field-label" data-i18n="event.description">Descripción</dt>
+          <dd class="event-description" id="eventDescription"></dd>
+        </div>
+      </dl>
+      <p class="event-note" data-i18n="event.readOnlyHint">Los eventos de calendario son de solo lectura: edítalos en Google Calendar.</p>
+    </div>
+  </aside>
+
+  <!-- ══════════════ Keyboard shortcuts ══════════════ -->
+  <aside class="sheet sheet-narrow" id="shortcutsSheet" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" hidden>
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <header class="sheet-head">
+      <h3 class="sheet-title" id="shortcutsTitle" data-i18n="shortcuts.title">Atajos</h3>
+      <button class="icon-btn" id="closeShortcutsBtn" type="button" data-i18n-aria="task.close" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </header>
+    <dl class="shortcuts sheet-body">
+      <div class="shortcut"><dt><kbd class="kbd">N</kbd></dt><dd data-i18n="shortcuts.new">Nueva tarea</dd></div>
+      <div class="shortcut"><dt><kbd class="kbd">/</kbd></dt><dd data-i18n="shortcuts.search">Buscar</dd></div>
+      <div class="shortcut"><dt><kbd class="kbd">R</kbd></dt><dd data-i18n="shortcuts.refresh">Refrescar dispositivo</dd></div>
+      <div class="shortcut"><dt><kbd class="kbd">?</kbd></dt><dd data-i18n="shortcuts.help">Mostrar atajos</dd></div>
+      <div class="shortcut"><dt><kbd class="kbd">Esc</kbd></dt><dd data-i18n="shortcuts.close">Cerrar</dd></div>
+    </dl>
   </aside>
 
   <!-- Toasts -->

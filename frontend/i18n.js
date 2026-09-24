@@ -24,7 +24,10 @@ const i18n = (() => {
         freeNow: 'Tiempo libre',
         elapsed: '{n}% completado',
         offline: 'Sin conexión con el dispositivo',
-        reconnected: 'Conexión restablecida'
+        reconnected: 'Conexión restablecida',
+        offlineRetry: 'Sin conexión con el dispositivo · reintentando…',
+        skipToTasks: 'Ir a las tareas',
+        clockLabel: 'Hora del dispositivo'
       },
       device: {
         title: 'Dispositivo',
@@ -37,13 +40,24 @@ const i18n = (() => {
         refresh: 'Refrescar ahora',
         scheduler: 'Planificador',
         schedulerOn: 'Activo',
-        schedulerOff: 'Detenido'
+        schedulerOff: 'Detenido',
+        schedulerStopped: 'Planificador detenido',
+        display: 'Pantalla',
+        updatedAgo: 'Actualizada hace {time}',
+        updatedJustNow: 'Actualizada ahora',
+        neverUpdated: 'Sin actualizar',
+        updating: 'Actualizando…',
+        previewAlt: 'Pantalla e-ink: {text}',
+        brightness: '{n}% de brillo'
       },
       timeline: {
         title: 'Línea del día',
         now: 'Ahora',
         empty: 'Día libre',
-        allDayRow: 'Todo el día'
+        allDayRow: 'Todo el día',
+        fromYesterday: 'viene de ayer',
+        untilTomorrow: 'sigue mañana',
+        dragHint: 'Arrastra para mover, o los bordes para cambiar la duración'
       },
       settings: {
         title: 'Ajustes',
@@ -58,7 +72,10 @@ const i18n = (() => {
         save: 'Guardar ajustes',
         dst: 'Horario de verano activo',
         dstInactive: 'Sin horario de verano',
-        syncInterval: 'Sincronizar calendarios cada'
+        syncInterval: 'Sincronizar calendarios cada',
+        autosave: 'Los cambios se guardan solos',
+        saving: 'Guardando…',
+        saved: 'Guardado'
       },
       calendar: {
         title: 'Calendarios',
@@ -117,12 +134,21 @@ const i18n = (() => {
         presets: 'Rápidos',
         selectAllDays: 'Todos',
         selectWeekdays: 'L–V',
-        selectWeekend: 'S–D'
+        selectWeekend: 'S–D',
+        ledActive: 'LED encendido',
+        nameRequired: 'Escribe un nombre para la tarea',
+        timesRequired: 'Indica la hora de inicio y la de fin',
+        duration: 'Dura {time}',
+        overlapsWith: 'Se solapa con: {names}',
+        saving: 'Guardando…',
+        duplicateAction: 'Duplicar',
+        copySuffix: '{name} (copia)'
       },
       tasks: {
         title: 'Tareas',
         search: 'Buscar tareas…',
         searchLabel: 'Buscar',
+        scopeLabel: 'Filtrar tareas',
         filterToday: 'Hoy',
         filterAll: 'Todas',
         emptyText: 'Aún no hay tareas.',
@@ -152,10 +178,14 @@ const i18n = (() => {
         minutes: '{n} min',
         hours: '{n} h',
         hoursMinutes: '{h} h {m} min',
-        minutesShort: '{n}m'
+        minutesShort: '{n}m',
+        seconds: '{n} s'
       },
       notifications: {
         taskCreated: 'Tarea creada',
+        taskDuplicated: 'Tarea duplicada',
+        taskMoved: 'Tarea movida a {range}',
+        calendarRestored: 'Calendario restaurado',
         taskUpdated: 'Tarea actualizada',
         taskDeleted: 'Tarea eliminada',
         taskRestored: 'Tarea restaurada',
@@ -182,7 +212,17 @@ const i18n = (() => {
         new: 'Nueva tarea',
         search: 'Buscar',
         refresh: 'Refrescar dispositivo',
-        close: 'Cerrar'
+        close: 'Cerrar',
+        help: 'Mostrar atajos',
+        open: 'Ver atajos de teclado'
+      },
+      event: {
+        when: 'Cuándo',
+        calendar: 'Calendario',
+        location: 'Lugar',
+        description: 'Descripción',
+        readOnlyHint: 'Los eventos de calendario son de solo lectura: edítalos en Google Calendar.',
+        open: 'Ver detalles del evento'
       },
       display: { noTasks: 'Sin tareas', systemStarted: 'Sistema Iniciado', allDays: 'Todos' },
       tz: {
@@ -245,7 +285,10 @@ const i18n = (() => {
         freeNow: 'Free time',
         elapsed: '{n}% elapsed',
         offline: 'No connection to the device',
-        reconnected: 'Connection restored'
+        reconnected: 'Connection restored',
+        offlineRetry: 'No connection to the device · retrying…',
+        skipToTasks: 'Skip to tasks',
+        clockLabel: 'Device time'
       },
       device: {
         title: 'Device',
@@ -258,13 +301,24 @@ const i18n = (() => {
         refresh: 'Refresh now',
         scheduler: 'Scheduler',
         schedulerOn: 'Running',
-        schedulerOff: 'Stopped'
+        schedulerOff: 'Stopped',
+        schedulerStopped: 'Scheduler stopped',
+        display: 'Display',
+        updatedAgo: 'Updated {time} ago',
+        updatedJustNow: 'Updated just now',
+        neverUpdated: 'Not updated yet',
+        updating: 'Updating…',
+        previewAlt: 'E-ink screen: {text}',
+        brightness: '{n}% brightness'
       },
       timeline: {
         title: 'Day timeline',
         now: 'Now',
         empty: 'Free day',
-        allDayRow: 'All day'
+        allDayRow: 'All day',
+        fromYesterday: 'from yesterday',
+        untilTomorrow: 'continues tomorrow',
+        dragHint: 'Drag to move, or drag the edges to change the length'
       },
       settings: {
         title: 'Settings',
@@ -279,7 +333,10 @@ const i18n = (() => {
         save: 'Save settings',
         dst: 'Daylight saving active',
         dstInactive: 'Standard time',
-        syncInterval: 'Sync calendars every'
+        syncInterval: 'Sync calendars every',
+        autosave: 'Changes save automatically',
+        saving: 'Saving…',
+        saved: 'Saved'
       },
       calendar: {
         title: 'Calendars',
@@ -338,12 +395,21 @@ const i18n = (() => {
         presets: 'Quick picks',
         selectAllDays: 'All',
         selectWeekdays: 'Mon–Fri',
-        selectWeekend: 'Sat–Sun'
+        selectWeekend: 'Sat–Sun',
+        ledActive: 'LED on',
+        nameRequired: 'Give the task a name',
+        timesRequired: 'Set a start and an end time',
+        duration: 'Lasts {time}',
+        overlapsWith: 'Overlaps with: {names}',
+        saving: 'Saving…',
+        duplicateAction: 'Duplicate',
+        copySuffix: '{name} (copy)'
       },
       tasks: {
         title: 'Tasks',
         search: 'Search tasks…',
         searchLabel: 'Search',
+        scopeLabel: 'Filter tasks',
         filterToday: 'Today',
         filterAll: 'All',
         emptyText: 'No tasks yet.',
@@ -373,10 +439,14 @@ const i18n = (() => {
         minutes: '{n} min',
         hours: '{n} h',
         hoursMinutes: '{h} h {m} min',
-        minutesShort: '{n}m'
+        minutesShort: '{n}m',
+        seconds: '{n} s'
       },
       notifications: {
         taskCreated: 'Task created',
+        taskDuplicated: 'Task duplicated',
+        taskMoved: 'Task moved to {range}',
+        calendarRestored: 'Calendar restored',
         taskUpdated: 'Task updated',
         taskDeleted: 'Task deleted',
         taskRestored: 'Task restored',
@@ -403,7 +473,17 @@ const i18n = (() => {
         new: 'New task',
         search: 'Search',
         refresh: 'Refresh device',
-        close: 'Close'
+        close: 'Close',
+        help: 'Show shortcuts',
+        open: 'Show keyboard shortcuts'
+      },
+      event: {
+        when: 'When',
+        calendar: 'Calendar',
+        location: 'Location',
+        description: 'Description',
+        readOnlyHint: 'Calendar events are read-only — edit them in Google Calendar.',
+        open: 'Show event details'
       },
       display: { noTasks: 'No tasks', systemStarted: 'System started', allDays: 'All' },
       tz: {

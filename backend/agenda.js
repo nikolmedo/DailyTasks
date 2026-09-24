@@ -125,6 +125,7 @@ function eventToSlot(event, dayStart) {
     source: 'calendar',
     name: event.title,
     location: event.location || null,
+    description: event.description || null,
     calendar_id: event.calendar_id,
     calendar_name: event.calendar_name,
     all_day: spansWholeDay,

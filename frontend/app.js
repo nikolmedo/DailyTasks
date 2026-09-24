@@ -4,6 +4,9 @@
  * Vanilla JS against the REST API. The whole interface takes its accent colour
  * from whatever the device's LED is currently holding, so the browser and the
  * hardware always read as one system.
+ *
+ * Updates arrive over Server-Sent Events (`/api/events`); a slow poll stays on
+ * as a safety net for proxies that drop the stream.
  */
 
 const API = '.';
@@ -51,8 +54,22 @@ const TIMEZONES = [
 ];
 
 const LED_PRESETS = ['#5ad1c4', '#e0a34a', '#e2705f', '#7f9cf5', '#a3d977', '#d987c4'];
-const DEFAULT_LED = '90, 209, 196';
+const DEFAULT_LED = { r: 90, g: 209, b: 196 };
+const DEFAULT_LED_2 = { r: 224, g: 163, b: 74 };
 const DONE_LIMIT = 5;
+const DAY = 1440;
+// Drag granularity on the timeline, in minutes
+const SNAP = 5;
+// With a live stream the poll is only a safety net
+const POLL_MS = 30000;
+
+// The surface every accent is read against (--bg-1) and the ink it lifts towards
+const SURFACE = { r: 16, g: 18, b: 22 };
+const BONE = { r: 236, g: 232, b: 221 };
+const DARK_INK = { r: 10, g: 11, b: 13 };
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const coarsePointer = window.matchMedia('(pointer: coarse)');
 
 // ─────────────────────────────────────────────────────────────── State ──────
 const state = {
@@ -67,11 +84,18 @@ const state = {
   editingId: null,
   ledOff: false,
   calLedOff: false,
-  lastClock: null,
   online: true,
-  // Markup of the last paint of each list. Polling runs every 15s and almost
-  // always produces identical HTML; rewriting innerHTML anyway would restart
-  // the entry animations and make the page visibly flicker.
+  saving: false,
+  // Browser-to-server clock offset, so the local clock matches the device
+  clockSkew: 0,
+  lastClock: null,
+  lastMinute: null,
+  lastActiveKey: undefined,
+  stream: null,
+  streamOpen: false,
+  // Markup of the last paint of each list. Refreshes almost always produce
+  // identical HTML; rewriting innerHTML anyway would restart the entry
+  // animations and make the page visibly flicker.
   painted: { tasks: null, timeline: null, calendars: null }
 };
 
@@ -80,6 +104,8 @@ const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 
 const el = {
+  themeColor: $('themeColor'),
+  offlineBar: $('offlineBar'),
   dateLabel: $('dateLabel'),
   connPill: $('connPill'),
   connZone: $('connZone'),
@@ -104,17 +130,19 @@ const el = {
   timelineTrack: $('timelineTrack'),
   timelineNow: $('timelineNow'),
   timelineNote: $('timelineNote'),
+  timelineTip: $('timelineTip'),
 
   tasksList: $('tasksList'),
   taskCount: $('taskCount'),
   searchInput: $('searchInput'),
   scopeSwitch: $('scopeSwitch'),
 
+  einkBezel: $('einkBezel'),
   einkPreview: $('einkPreview'),
-  devRefreshBtn: $('devRefreshBtn'),
+  einkStatus: $('einkStatus'),
   ledChip: $('ledChip'),
   ledChipText: $('ledChipText'),
-  schedulerState: $('schedulerState'),
+  displayState: $('displayState'),
 
   calendarList: $('calendarList'),
   addCalendarBtn: $('addCalendarBtn'),
@@ -126,8 +154,9 @@ const el = {
   timeFormat: $('timeFormat'),
   language: $('language'),
   syncInterval: $('syncInterval'),
-  saveConfigBtn: $('saveConfigBtn'),
+  saveState: $('saveState'),
   dstIndicator: $('dstIndicator'),
+  shortcutsBtn: $('shortcutsBtn'),
 
   scrim: $('scrim'),
   taskSheet: $('taskSheet'),
@@ -135,18 +164,24 @@ const el = {
   sheetTitle: $('sheetTitle'),
   closeSheetBtn: $('closeSheetBtn'),
   cancelSheetBtn: $('cancelSheetBtn'),
+  duplicateTaskBtn: $('duplicateTaskBtn'),
+  taskSubmitBtn: $('taskSubmitBtn'),
   taskId: $('taskId'),
   taskName: $('taskName'),
   startTime: $('startTime'),
   endTime: $('endTime'),
   timeRow: $('timeRow'),
+  timeSummary: $('timeSummary'),
+  timeSummaryText: $('timeSummaryText'),
+  timeSummaryWarn: $('timeSummaryWarn'),
   allDayCheck: $('allDayCheck'),
   dayPicker: $('dayPicker'),
+  colorRow: $('colorRow'),
   colorSwatch: $('colorSwatch'),
   ledColorPicker: $('ledColorPicker'),
   colorValue: $('colorValue'),
   colorPresets: $('colorPresets'),
-  ledOffBtn: $('ledOffBtn'),
+  ledOnCheck: $('ledOnCheck'),
   ledColor: $('ledColor'),
   formHint: $('formHint'),
 
@@ -156,15 +191,32 @@ const el = {
   cancelCalSheetBtn: $('cancelCalSheetBtn'),
   calUrl: $('calUrl'),
   calName: $('calName'),
+  calColorRow: $('calColorRow'),
   calColorSwatch: $('calColorSwatch'),
   calColorPicker: $('calColorPicker'),
   calColorValue: $('calColorValue'),
-  calLedOffBtn: $('calLedOffBtn'),
+  calLedOnCheck: $('calLedOnCheck'),
   calSubmitBtn: $('calSubmitBtn'),
   calFormHint: $('calFormHint'),
 
+  eventSheet: $('eventSheet'),
+  closeEventSheetBtn: $('closeEventSheetBtn'),
+  eventTitle: $('eventTitle'),
+  eventWhen: $('eventWhen'),
+  eventCalendar: $('eventCalendar'),
+  eventCalendarName: $('eventCalendarName'),
+  eventLocationRow: $('eventLocationRow'),
+  eventLocation: $('eventLocation'),
+  eventDescriptionRow: $('eventDescriptionRow'),
+  eventDescription: $('eventDescription'),
+
+  shortcutsSheet: $('shortcutsSheet'),
+  closeShortcutsBtn: $('closeShortcutsBtn'),
+
   toasts: $('toasts')
 };
+
+const SHEETS = [el.taskSheet, el.calendarSheet, el.eventSheet, el.shortcutsSheet];
 
 // ─────────────────────────────────────────────────────────────── Utils ──────
 
@@ -190,40 +242,57 @@ function parseRgb(value) {
   return { r: parts[0], g: parts[1], b: parts[2] };
 }
 
+const triplet = (rgb) => `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+
+/** WCAG relative luminance, 0..1 */
+function luminance({ r, g, b }) {
+  const lin = (c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+function contrast(a, b) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+function mix(a, b, t) {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t)
+  };
+}
+
 /**
  * Lift a colour until it is legible against the graphite substrate.
  *
- * The LED is driven at full brightness so a deep colour like "96,61,11" looks
+ * The LED is driven at full brightness so a deep colour like "0,30,255" looks
  * right on the hardware, but the same value painted on a near-black panel is
- * invisible. Only the on-screen rendering is adjusted — the value sent to the
- * device is never touched.
+ * unreadable. Measured by WCAG contrast rather than HSL lightness — a pure blue
+ * has 50% lightness yet almost no luminance — and mixed towards the bone ink
+ * until the target is met. Only the on-screen rendering is adjusted; the value
+ * sent to the device is never touched.
  *
  * @param {{r:number,g:number,b:number}} rgb
- * @param {number} minL - floor for lightness, 0..1
+ * @param {number} minContrast - against --bg-1
  * @returns {{r:number,g:number,b:number}}
  */
-function liftForScreen(rgb, minL = 0.52) {
-  const r = rgb.r / 255;
-  const g = rgb.g / 255;
-  const b = rgb.b / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-
-  if (l >= minL || max === min) {
-    // Greys still need a floor, colours bright enough are left alone
-    if (max !== min) return rgb;
-    const v = Math.max(Math.round(minL * 255), rgb.r);
-    return { r: v, g: v, b: v };
+function liftForScreen(rgb, minContrast = 4.5) {
+  if (contrast(rgb, SURFACE) >= minContrast) return rgb;
+  for (let t = 0.05; t < 1; t += 0.05) {
+    const lifted = mix(rgb, BONE, t);
+    if (contrast(lifted, SURFACE) >= minContrast) return lifted;
   }
+  return BONE;
+}
 
-  // Scale towards white, preserving hue
-  const factor = minL / Math.max(l, 0.04);
-  return {
-    r: Math.min(255, Math.round(rgb.r * factor)),
-    g: Math.min(255, Math.round(rgb.g * factor)),
-    b: Math.min(255, Math.round(rgb.b * factor))
-  };
+/** Dark or light ink, whichever reads better on the given fill. */
+function inkOn(rgb) {
+  return contrast(rgb, DARK_INK) >= contrast(rgb, { r: 255, g: 255, b: 255 }) ? DARK_INK : { r: 255, g: 255, b: 255 };
 }
 
 /**
@@ -234,14 +303,17 @@ function liftForScreen(rgb, minL = 0.52) {
  */
 function rgbTriplet(value, fallback = '236, 232, 221') {
   const rgb = parseRgb(value);
-  if (!rgb) return fallback;
-  const lifted = liftForScreen(rgb);
-  return `${lifted.r}, ${lifted.g}, ${lifted.b}`;
+  return rgb ? triplet(liftForScreen(rgb)) : fallback;
 }
 
 function timeToMinutes(value) {
   const [h, m] = String(value).split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
+}
+
+function minutesToTime(minutes) {
+  const wrapped = ((Math.round(minutes) % DAY) + DAY) % DAY;
+  return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
 }
 
 /**
@@ -270,12 +342,18 @@ function fmtDuration(minutes) {
   return m === 0 ? i18n.t('units.hours', { n: h }) : i18n.t('units.hoursMinutes', { h, m });
 }
 
+/** Elapsed time since an ISO stamp: "12 s" / "3 min" / "1 h 5 min" */
+function fmtSince(iso) {
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!Number.isFinite(seconds)) return null;
+  if (seconds < 60) return i18n.t('units.seconds', { n: Math.max(0, Math.round(seconds)) });
+  return fmtDuration(seconds / 60);
+}
+
 function fmtRelative(iso) {
   if (!iso) return i18n.t('calendar.neverSynced');
-  const diff = (Date.now() - new Date(iso).getTime()) / 60000;
-  if (!Number.isFinite(diff)) return i18n.t('calendar.neverSynced');
-  if (diff < 1) return i18n.t('calendar.lastSync', { time: i18n.t('units.minutesShort', { n: 0 }) });
-  return i18n.t('calendar.lastSync', { time: fmtDuration(diff) });
+  const since = fmtSince(iso);
+  return since ? i18n.t('calendar.lastSync', { time: since }) : i18n.t('calendar.neverSynced');
 }
 
 /**
@@ -291,6 +369,30 @@ function deviceTimezone() {
   return state.status?.timezone || state.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+const clockFormatters = new Map();
+
+/**
+ * The device's wall clock, computed locally from the server's epoch so it can
+ * tick every second without a round trip.
+ * @returns {{minutes: number, hhmm: string}}
+ */
+function deviceClock() {
+  const tz = deviceTimezone();
+  let fmt = clockFormatters.get(tz);
+  if (!fmt) {
+    try {
+      fmt = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    } catch {
+      fmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    }
+    clockFormatters.set(tz, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(Date.now() + state.clockSkew));
+  const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10) % 24;
+  const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10);
+  return { minutes: h * 60 + m, hhmm: minutesToTime(h * 60 + m) };
+}
+
 /** Day-of-week (0=Sun) in the device's timezone. */
 function todayDow() {
   try {
@@ -298,12 +400,18 @@ function todayDow() {
     const parts = new Intl.DateTimeFormat('en', {
       timeZone: deviceTimezone(),
       weekday: 'short'
-    }).formatToParts(new Date());
+    }).formatToParts(new Date(Date.now() + state.clockSkew));
     return names.indexOf(parts.find(p => p.type === 'weekday')?.value ?? '');
   } catch {
     return new Date().getDay();
   }
 }
+
+function nowMinutes() {
+  return deviceClock().minutes;
+}
+
+const motionOk = () => !reducedMotion.matches;
 
 // ──────────────────────────────────────────────────────── Timezone info ─────
 
@@ -442,18 +550,32 @@ async function api(path, options = {}) {
   return body;
 }
 
+const jsonBody = (method, payload) => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload)
+});
+
 function setOnline(online) {
   if (state.online === online) return;
   state.online = online;
   el.connPill.dataset.state = online ? 'ok' : 'down';
-  if (online) toast(i18n.t('app.reconnected'));
+  el.offlineBar.hidden = online;
+  if (online) {
+    toast(i18n.t('app.reconnected'));
+    // Anything may have changed while we were away
+    refreshAll();
+  }
 }
 
 async function loadConfig() {
   const { data } = await api('/api/config');
+  const langChanged = data.language !== state.config.language;
   state.config = data;
-  await i18n.load(data.language || 'es');
-  i18n.apply();
+  if (langChanged) {
+    await i18n.load(data.language || 'es');
+    i18n.apply();
+  }
   syncConfigUI();
 }
 
@@ -466,6 +588,7 @@ async function loadStatus() {
   const { data } = await api('/api/status');
   state.status = data;
   state.agendaSlots = data.agenda || [];
+  if (data.epoch) state.clockSkew = data.epoch - Date.now();
 }
 
 async function loadCalendars() {
@@ -473,50 +596,111 @@ async function loadCalendars() {
   state.calendars = data;
 }
 
+/** Reload everything the panel shows and repaint. */
+async function refreshAll() {
+  try {
+    await Promise.all([loadTasks(), loadStatus(), loadCalendars()]);
+    renderAll();
+    refreshEinkPreview();
+  } catch {
+    /* setOnline already flagged it; the next tick will retry */
+  }
+}
+
 // ────────────────────────────────────────────────────── Colour plumbing ─────
 
 /**
  * Push the active task's colour into the CSS custom properties that the whole
- * interface reads from.
+ * interface reads from. The channels are registered with @property, so the
+ * whole panel glides from one colour to the next.
  * @param {string|null} ledColor - "r,g,b"
  */
 function applyTint(ledColor) {
   const rgb = parseRgb(ledColor);
-  if (rgb) {
-    const ui = liftForScreen(rgb, 0.58);
-    root.style.setProperty('--led', `${ui.r}, ${ui.g}, ${ui.b}`);
+  // A task with the LED disabled still needs legible chrome, so the house
+  // accent stays. The LED readout in the device panel is what reports "off".
+  const ui = rgb ? liftForScreen(rgb, 5) : DEFAULT_LED;
+  const partner = rgb
     // A complementary-ish partner for the second ambient glow
-    root.style.setProperty('--led-2', `${ui.b}, ${Math.round(ui.r * 0.6 + 60)}, ${Math.round(ui.g * 0.7 + 40)}`);
-  } else {
-    // A task with the LED disabled still needs legible chrome, so the house
-    // accent stays. The LED readout in the device panel is what reports "off".
-    root.style.setProperty('--led', DEFAULT_LED);
-    root.style.setProperty('--led-2', '224, 163, 74');
-  }
+    ? { r: ui.b, g: Math.min(255, Math.round(ui.r * 0.6 + 60)), b: Math.min(255, Math.round(ui.g * 0.7 + 40)) }
+    : DEFAULT_LED_2;
+  const on = inkOn(ui);
+
+  const set = (name, value) => root.style.setProperty(name, String(value));
+  set('--led-r', ui.r); set('--led-g', ui.g); set('--led-b', ui.b);
+  set('--led2-r', partner.r); set('--led2-g', partner.g); set('--led2-b', partner.b);
+  set('--on-led', triplet(on));
+
+  // Browser chrome picks up a whisper of the accent
+  const chrome = mix({ r: 11, g: 12, b: 14 }, ui, 0.14);
+  el.themeColor.setAttribute('content', rgbToHex(chrome.r, chrome.g, chrome.b));
 }
 
 // ───────────────────────────────────────────────────────── Now instrument ───
+
+/**
+ * Paint the clock character by character so only the digits that changed roll.
+ * @param {string} text
+ */
+function renderClock(text) {
+  if (text === state.lastClock) return;
+  const previous = state.lastClock || '';
+  state.lastClock = text;
+
+  el.nowClock.innerHTML = [...text].map((ch, i) => {
+    if (ch === ':') return '<span class="clock-colon">:</span>';
+    const changed = previous && previous[i] !== ch;
+    return `<span class="clock-ch${changed ? ' roll' : ''}">${escapeHtml(ch)}</span>`;
+  }).join('');
+}
+
+/**
+ * One-second heartbeat: the clock, the playhead and the "x ago" readouts run
+ * locally so they never lag the device by a poll interval.
+ */
+function tick() {
+  if (!state.status) return;
+  const clock = deviceClock();
+  renderClock(fmtTime(clock.hhmm));
+
+  if (clock.minutes !== state.lastMinute) {
+    const first = state.lastMinute === null;
+    state.lastMinute = clock.minutes;
+    if (!first) {
+      positionNowMarker();
+      // The device ticks on the minute; give it a moment and pick up the result
+      if (!state.streamOpen) setTimeout(poll, 2500);
+    }
+  }
+  renderDeviceTimes();
+}
 
 function renderNow() {
   const status = state.status;
   if (!status) return;
 
-  // Clock, with a roll animation when the minute changes
-  const clock = fmtTime(status.currentTime || '--:--');
-  if (clock !== state.lastClock) {
-    el.nowClock.textContent = clock;
-    el.nowClock.classList.remove('tick');
-    void el.nowClock.offsetWidth;
-    el.nowClock.classList.add('tick');
-    state.lastClock = clock;
-  }
-
+  renderClock(fmtTime(deviceClock().hhmm));
   el.connZone.textContent = (status.timezone || '').split('/').pop().replace(/_/g, ' ');
 
   const active = status.activeTask;
+  const activeKey = active ? active.key : null;
   el.nowPanel.dataset.active = active ? 'true' : 'false';
 
+  // A new slot took over: swap the title in and restart the progress sweep
+  if (state.lastActiveKey !== undefined && state.lastActiveKey !== activeKey && motionOk()) {
+    el.nowPanel.classList.remove('is-swapping');
+    void el.nowPanel.offsetWidth;
+    el.nowPanel.classList.add('is-swapping');
+    el.nowProgressFill.style.transition = 'none';
+    el.nowProgressFill.style.setProperty('--p', '0');
+    void el.nowProgressFill.offsetWidth;
+    el.nowProgressFill.style.transition = '';
+  }
+  state.lastActiveKey = activeKey;
+
   const tagText = el.nowStatusTag.querySelector('span:last-child');
+  const next = status.nextTask;
+
   if (active) {
     el.nowTitle.textContent = active.name;
     el.nowTitle.removeAttribute('data-i18n');
@@ -540,70 +724,165 @@ function renderNow() {
     tagText.textContent = i18n.t('app.statusIdle');
     el.nowSource.hidden = true;
     el.nowRange.textContent = '';
-    el.nowRemaining.textContent = '';
+    // Idle: count down to whatever starts next today
+    el.nowRemaining.textContent = next && !next.isTomorrow
+      ? i18n.t('app.startsIn', { time: fmtDuration(next.startMinutes - timeToMinutes(status.currentTime)) })
+      : '';
     el.nowProgress.hidden = true;
   }
 
-  const next = status.nextTask;
-  el.nowNext.hidden = !next;
+  el.nowNext.hidden = false;
+  const label = el.nowNext.querySelector('.now-next-label');
   if (next) {
-    el.nowNext.querySelector('.now-next-label').textContent =
-      next.isTomorrow ? i18n.t('app.nextTomorrow') : i18n.t('app.nextUp');
+    label.textContent = next.isTomorrow ? i18n.t('app.nextTomorrow') : i18n.t('app.nextUp');
     el.nowNextText.textContent = `${fmtTime(next.start_time)} · ${next.name}`;
+  } else {
+    label.textContent = i18n.t('app.nextUp');
+    el.nowNextText.textContent = i18n.t('app.nothingNext');
   }
 
   applyTint(active ? active.led_color : null);
+  renderDevice();
+}
 
-  // Device readouts
-  const lit = Boolean(active && active.led_color);
-  el.ledChip.dataset.on = String(lit);
-  el.ledChipText.textContent = status.ledAvailable === false
-    ? i18n.t('device.ledUnavailable')
-    : (lit ? i18n.t('device.ledOn') : i18n.t('device.ledOff'));
-  el.schedulerState.textContent = status.schedulerRunning
-    ? i18n.t('device.schedulerOn')
-    : i18n.t('device.schedulerOff');
+// ─────────────────────────────────────────────────────────── Device panel ───
+
+function renderDevice() {
+  const status = state.status;
+  if (!status) return;
+
+  const led = status.device?.led;
+  const rgb = led?.on ? parseRgb(led.color) : null;
+  el.ledChip.dataset.on = String(Boolean(rgb));
+  if (rgb) el.ledChip.style.setProperty('--dev', triplet(liftForScreen(rgb)));
+
+  if (status.ledAvailable === false) {
+    el.ledChipText.textContent = i18n.t('device.ledUnavailable');
+  } else if (rgb) {
+    el.ledChipText.textContent = `${rgbToHex(rgb.r, rgb.g, rgb.b).toUpperCase()} · ${i18n.t('device.brightness', { n: led.brightness })}`;
+  } else {
+    el.ledChipText.textContent = i18n.t('device.ledOff');
+  }
+
+  const active = status.activeTask;
+  el.einkPreview.alt = i18n.t('device.previewAlt', {
+    text: active
+      ? `${active.name}${active.all_day ? '' : ` · ${fmtTime(active.start_time)}–${fmtTime(active.end_time)}`}`
+      : i18n.t('app.freeNow')
+  });
+
+  renderDeviceTimes();
+}
+
+/** The "updated x ago" readout, refreshed by the one-second heartbeat. */
+function renderDeviceTimes() {
+  const status = state.status;
+  if (!status) return;
+  const pushedAt = status.device?.display?.lastPushAt;
+  const since = pushedAt ? fmtSince(pushedAt) : null;
+
+  let text = !pushedAt
+    ? i18n.t('device.neverUpdated')
+    : (Date.now() - new Date(pushedAt).getTime() < 5000
+      ? i18n.t('device.updatedJustNow')
+      : i18n.t('device.updatedAgo', { time: since }));
+  if (!status.schedulerRunning) text = `${i18n.t('device.schedulerStopped')} · ${text}`;
+
+  if (el.displayState.textContent !== text) el.displayState.textContent = text;
+  el.displayState.classList.toggle('is-warn', !status.schedulerRunning);
 }
 
 // ──────────────────────────────────────────────────────────── Timeline ──────
 
+/**
+ * The slice of the day the timeline shows. Phones get a 12-hour window around
+ * now — a whole day in 350px leaves ten-minute blocks three pixels wide.
+ * @returns {{from: number, to: number}}
+ */
+function timelineWindow() {
+  if (window.innerWidth >= 620) return { from: 0, to: DAY };
+  const span = 12 * 60;
+  const centre = state.status ? nowMinutes() : 12 * 60;
+  const from = Math.min(DAY - span, Math.max(0, Math.round((centre - span / 2) / 60) * 60));
+  return { from, to: from + span };
+}
+
+const pct = (minutes, win) => ((minutes - win.from) / (win.to - win.from)) * 100;
+
+function hourLabel(h) {
+  if (state.config.time_format !== '12') return String(h).padStart(2, '0');
+  if (h === 0 || h === 24) return '12a';
+  if (h === 12) return '12p';
+  return h > 12 ? `${h - 12}p` : `${h}a`;
+}
+
 function renderTimelineScale() {
-  const hours = [0, 3, 6, 9, 12, 15, 18, 21, 24];
-  el.timelineScale.innerHTML = hours.map((h, idx) => {
-    const minor = idx % 2 === 1;
-    const label = state.config.time_format === '12'
-      ? (h === 0 || h === 24 ? '12a' : h === 12 ? '12p' : (h > 12 ? `${h - 12}p` : `${h}a`))
-      : String(h).padStart(2, '0');
-    return `<span class="timeline-tick${minor ? ' minor' : ''}" style="--x:${(h / 24) * 100}%">${label}</span>`;
-  }).join('');
+  const win = timelineWindow();
+  const step = win.to - win.from === DAY ? 3 : 2;
+  const hours = [];
+  for (let h = Math.ceil(win.from / 60); h <= win.to / 60; h += step) hours.push(h);
+
+  el.timelineScale.innerHTML = hours.map((h, idx) =>
+    `<span class="timeline-tick${idx % 2 === 1 ? ' minor' : ''}" style="--x:${pct(h * 60, win)}%">${hourLabel(h)}</span>`
+  ).join('');
+}
+
+function positionNowMarker() {
+  const win = timelineWindow();
+  const x = pct(nowMinutes(), win);
+  el.timelineNow.style.setProperty('--x', `${x}%`);
+  // Keep the "Now" label inside the track at the edges of the day
+  el.timelineNow.dataset.edge = x < 5 ? 'start' : x > 95 ? 'end' : '';
 }
 
 /**
- * Lay the day's slots onto rows so overlapping blocks never sit on top of
+ * A slot as the pieces it occupies on today's strip. A task that runs through
+ * midnight owns both the early morning (carried over from yesterday) and the
+ * late evening, exactly as agenda.js treats it.
+ * @param {Object} slot
+ * @returns {Array<{start: number, end: number, cont: string}>}
+ */
+function slotSegments(slot) {
+  if (slot.crossesMidnight) {
+    return [
+      { start: 0, end: slot.endMinutes, cont: 'before' },
+      { start: slot.startMinutes, end: DAY, cont: 'after' }
+    ].filter(seg => seg.end > seg.start);
+  }
+  return [{ start: slot.startMinutes, end: slot.endMinutes, cont: '' }];
+}
+
+/**
+ * Lay the day's segments onto rows so overlapping blocks never sit on top of
  * each other (a simple greedy interval-packing).
- * @param {Array<Object>} slots
+ * @param {Array<Object>} segments
  * @returns {Array<Array<Object>>} rows
  */
-function packRows(slots) {
+function packRows(segments) {
   const rows = [];
-  for (const slot of slots) {
-    const start = slot.startMinutes;
-    const end = slot.crossesMidnight ? 1440 : slot.endMinutes;
-    const row = rows.find(r => r.every(s => {
-      const sEnd = s.crossesMidnight ? 1440 : s.endMinutes;
-      return start >= sEnd || end <= s.startMinutes;
-    }));
-    if (row) row.push(slot);
-    else rows.push([slot]);
+  for (const seg of segments) {
+    const row = rows.find(r => r.every(s => seg.start >= s.end || seg.end <= s.start));
+    if (row) row.push(seg);
+    else rows.push([seg]);
   }
   return rows;
 }
 
+function segmentTip(slot, seg) {
+  const range = slot.all_day
+    ? i18n.t('task.allDay')
+    : `${fmtTime(slot.start_time)}–${fmtTime(slot.end_time)}`;
+  const note = seg.cont === 'before' ? ` · ${i18n.t('timeline.fromYesterday')}`
+    : seg.cont === 'after' ? ` · ${i18n.t('timeline.untilTomorrow')}` : '';
+  return `${slot.name} · ${range}${note}`;
+}
+
 function renderTimeline() {
   const slots = state.agendaSlots.filter(s => !s.done);
-  const nowMinutes = state.status ? timeToMinutes(state.status.currentTime) : 0;
+  const win = timelineWindow();
+  const now = nowMinutes();
 
-  el.timelineNow.style.setProperty('--x', `${(nowMinutes / 1440) * 100}%`);
+  positionNowMarker();
   el.timelineNote.textContent = slots.length
     ? `${slots.length} · ${i18n.t('tasks.filterToday')}`
     : '';
@@ -613,26 +892,37 @@ function renderTimeline() {
     return;
   }
 
-  const rows = packRows(slots.slice().sort((a, b) => a.startMinutes - b.startMinutes));
+  const segments = slots
+    .flatMap(slot => slotSegments(slot).map(seg => ({ ...seg, slot })))
+    .map(seg => ({ ...seg, start: Math.max(seg.start, win.from), end: Math.min(seg.end, win.to) }))
+    .filter(seg => seg.end > seg.start)
+    .sort((a, b) => a.start - b.start);
+
+  const rows = packRows(segments);
   let index = 0;
+  const activeKey = state.status?.activeTask?.key;
 
   const html = rows.map(row => {
-    const blocks = row.map(slot => {
-      const end = slot.crossesMidnight ? 1440 : slot.endMinutes;
-      const left = (slot.startMinutes / 1440) * 100;
-      const width = Math.max(0.6, ((end - slot.startMinutes) / 1440) * 100);
-      const isNow = state.status?.activeTask?.key === slot.key;
+    const blocks = row.map(seg => {
+      const { slot } = seg;
+      const left = pct(seg.start, win);
+      const width = Math.max(0.6, pct(seg.end, win) - left);
+      const isNow = activeKey === slot.key && now >= seg.start && now < seg.end;
+      const draggable = slot.source === 'task' && !slot.all_day && !slot.crossesMidnight;
       const classes = [
         'timeline-block',
         width > 11 ? 'wide' : '',
         isNow ? 'is-now' : '',
-        slot.source === 'calendar' ? 'is-calendar' : ''
+        slot.source === 'calendar' ? 'is-calendar' : '',
+        seg.cont ? `is-cont-${seg.cont}` : ''
       ].filter(Boolean).join(' ');
+      const tip = segmentTip(slot, seg);
 
       return `<button type="button" class="${classes}"
         style="--a:${left}%; --w:${width}%; --c:${rgbTriplet(slot.led_color)}; --i:${index++}"
-        data-key="${escapeHtml(slot.key)}"
-        title="${escapeHtml(`${slot.name} · ${fmtTime(slot.start_time)}–${fmtTime(slot.end_time)}`)}">
+        data-key="${escapeHtml(slot.key)}" data-tip="${escapeHtml(tip)}"
+        ${draggable ? `data-draggable="true" data-start="${slot.startMinutes}" data-end="${slot.endMinutes}"` : ''}
+        aria-label="${escapeHtml(tip)}">
         <span class="timeline-block-label">${escapeHtml(slot.name)}</span>
       </button>`;
     }).join('');
@@ -640,6 +930,161 @@ function renderTimeline() {
   }).join('');
 
   paint(el.timelineTrack, html, 'timeline');
+}
+
+// Floating tooltip shared by every block
+
+function showTip(block, text) {
+  const host = el.timeline.getBoundingClientRect();
+  const rect = block.getBoundingClientRect();
+  el.timelineTip.textContent = text ?? block.dataset.tip;
+  el.timelineTip.hidden = false;
+
+  const tipWidth = el.timelineTip.offsetWidth;
+  const centre = rect.left + rect.width / 2 - host.left;
+  const x = Math.min(host.width - tipWidth / 2, Math.max(tipWidth / 2, centre));
+  el.timelineTip.style.setProperty('--tx', `${x}px`);
+  el.timelineTip.style.setProperty('--ty', `${rect.top - host.top}px`);
+}
+
+function hideTip() {
+  el.timelineTip.hidden = true;
+}
+
+// ─────────────────────────────────────────────── Timeline drag & resize ─────
+
+let drag = null;
+let suppressClick = false;
+
+function dragRange(d) {
+  return `${fmtTime(minutesToTime(d.start))}–${fmtTime(minutesToTime(d.end === DAY ? DAY - 1 : d.end))}`;
+}
+
+function onTimelinePointerDown(event) {
+  const block = event.target.closest('.timeline-block[data-draggable]');
+  // Touch keeps its scroll gesture; blocks are tapped to edit instead
+  if (!block || event.pointerType === 'touch' || event.button !== 0) return;
+
+  const rect = block.getBoundingClientRect();
+  const handle = Math.min(8, rect.width / 3);
+  const edge = event.clientX - rect.left < handle ? 'start'
+    : rect.right - event.clientX < handle ? 'end' : 'move';
+  const win = timelineWindow();
+
+  drag = {
+    block,
+    edge,
+    id: block.dataset.key.slice(5),
+    x0: event.clientX,
+    start0: Number(block.dataset.start),
+    end0: Number(block.dataset.end),
+    start: Number(block.dataset.start),
+    end: Number(block.dataset.end),
+    moved: false,
+    win,
+    pxPerMin: el.timelineTrack.getBoundingClientRect().width / (win.to - win.from)
+  };
+  block.setPointerCapture(event.pointerId);
+}
+
+function onTimelinePointerMove(event) {
+  // Hover affordance: the edges resize, the body moves
+  const hover = event.target.closest('.timeline-block[data-draggable]');
+  if (!drag && hover && event.pointerType !== 'touch') {
+    const rect = hover.getBoundingClientRect();
+    const handle = Math.min(8, rect.width / 3);
+    const nearEdge = event.clientX - rect.left < handle || rect.right - event.clientX < handle;
+    hover.style.cursor = nearEdge ? 'ew-resize' : 'grab';
+  }
+  if (!drag) return;
+
+  const dx = event.clientX - drag.x0;
+  if (!drag.moved && Math.abs(dx) < 4) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    drag.block.classList.add('is-dragging');
+    root.classList.add('is-dragging-block');
+  }
+
+  const delta = Math.round(dx / drag.pxPerMin / SNAP) * SNAP;
+  const length = drag.end0 - drag.start0;
+  if (drag.edge === 'move') {
+    drag.start = Math.min(DAY - length, Math.max(0, drag.start0 + delta));
+    drag.end = drag.start + length;
+  } else if (drag.edge === 'start') {
+    drag.start = Math.min(drag.end0 - SNAP, Math.max(0, drag.start0 + delta));
+  } else {
+    drag.end = Math.min(DAY, Math.max(drag.start0 + SNAP, drag.end0 + delta));
+  }
+
+  const left = pct(Math.max(drag.start, drag.win.from), drag.win);
+  const right = pct(Math.min(drag.end, drag.win.to), drag.win);
+  drag.block.style.setProperty('--a', `${left}%`);
+  drag.block.style.setProperty('--w', `${Math.max(0.6, right - left)}%`);
+  showTip(drag.block, `${drag.block.querySelector('.timeline-block-label').textContent} · ${dragRange(drag)}`);
+}
+
+async function onTimelinePointerUp() {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  root.classList.remove('is-dragging-block');
+  if (!d.moved) return;
+
+  suppressClick = true;
+  hideTip();
+  if (d.start === d.start0 && d.end === d.end0) {
+    d.block.classList.remove('is-dragging');
+    return;
+  }
+
+  const task = state.tasks.find(t => t.id === Number(d.id));
+  if (!task) return;
+  const before = { start_time: task.start_time, end_time: task.end_time };
+  const after = {
+    start_time: minutesToTime(d.start),
+    end_time: d.end === DAY ? '23:59' : minutesToTime(d.end)
+  };
+
+  const saved = await updateTaskTimes(task, after);
+  d.block.classList.remove('is-dragging');
+  if (!saved) {
+    // Put the block back where the server still has it
+    state.painted.timeline = null;
+    renderTimeline();
+    return;
+  }
+
+  toast(i18n.t('notifications.taskMoved', { range: dragRange(d) }), {
+    action: {
+      label: i18n.t('notifications.undo'),
+      onClick: () => updateTaskTimes(saved, before)
+    }
+  });
+}
+
+/**
+ * PUT a task back with new times, keeping everything else as it was.
+ * @returns {Promise<Object|null>} the saved task, or null on failure
+ */
+async function updateTaskTimes(task, times) {
+  try {
+    const { data } = await api(`/api/tasks/${task.id}`, jsonBody('PUT', {
+      name: task.name,
+      start_time: times.start_time,
+      end_time: times.end_time,
+      led_color: task.led_color,
+      active_days: task.active_days,
+      all_day: task.all_day
+    }));
+    await Promise.all([loadTasks(), loadStatus()]);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
+    return data;
+  } catch (error) {
+    toast(error.message || i18n.t('notifications.errorUpdateTask'), { type: 'error' });
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────── Task cards ─────
@@ -660,35 +1105,53 @@ function isScheduledToday(task) {
   return task.active_days.split(',').map(d => parseInt(d.trim(), 10)).includes(todayDow());
 }
 
+/**
+ * Has today's run of this task finished?
+ *
+ * A task that runs through midnight is never "over" during the day: its early
+ * hours belong to last night's run and its evening is still to come.
+ */
 function isPastToday(task) {
-  if (task.all_day || !state.status?.currentTime) return false;
-  const now = timeToMinutes(state.status.currentTime);
+  if (task.all_day || !state.status || !isScheduledToday(task)) return false;
   const start = timeToMinutes(task.start_time);
   const end = timeToMinutes(task.end_time);
-  return end < start ? (now >= end && now < start) : now >= end;
+  if (end < start) return false;
+  return nowMinutes() >= end;
 }
 
 /**
- * Does this task's window collide with another task scheduled on a shared day?
- * @param {Object} task
- * @returns {boolean}
+ * The minute ranges a window covers on its own day.
+ * @returns {Array<[number, number]>}
  */
-function hasOverlap(task) {
-  if (task.all_day || task.done) return false;
-  const days = new Set((task.active_days || '0,1,2,3,4,5,6').split(',').map(d => d.trim()));
-  const start = timeToMinutes(task.start_time);
-  const end = timeToMinutes(task.end_time);
-  if (end <= start) return false;
+function windowIntervals(startTime, endTime) {
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  if (end === start) return [];
+  return end > start ? [[start, end]] : [[start, DAY], [0, end]];
+}
 
-  return state.tasks.some(other => {
+/**
+ * Tasks whose window collides with the given one on a shared day.
+ * @param {{id?: number, start_time: string, end_time: string, active_days: string}} task
+ * @returns {Array<Object>}
+ */
+function overlappingTasks(task) {
+  const days = new Set((task.active_days || '0,1,2,3,4,5,6').split(',').map(d => d.trim()));
+  const mine = windowIntervals(task.start_time, task.end_time);
+  if (mine.length === 0) return [];
+
+  return state.tasks.filter(other => {
     if (other.id === task.id || other.done || other.all_day) return false;
     const otherDays = (other.active_days || '0,1,2,3,4,5,6').split(',').map(d => d.trim());
     if (!otherDays.some(d => days.has(d))) return false;
-    const oStart = timeToMinutes(other.start_time);
-    const oEnd = timeToMinutes(other.end_time);
-    if (oEnd <= oStart) return false;
-    return start < oEnd && oStart < end;
+    const theirs = windowIntervals(other.start_time, other.end_time);
+    return mine.some(([a1, a2]) => theirs.some(([b1, b2]) => a1 < b2 && b1 < a2));
   });
+}
+
+function hasOverlap(task) {
+  if (task.all_day || task.done) return false;
+  return overlappingTasks(task).length > 0;
 }
 
 const ICONS = {
@@ -714,7 +1177,7 @@ function taskCard(task, index) {
 
   const badges = [
     isNow ? `<span class="badge badge-now">${escapeHtml(i18n.t('app.statusActive'))}</span>` : '',
-    overlap ? `<span class="badge badge-warn" title="${escapeHtml(i18n.t('task.overlaps'))}">${ICONS.warn}</span>` : ''
+    overlap ? `<span class="badge badge-warn" title="${escapeHtml(i18n.t('task.overlaps'))}" aria-label="${escapeHtml(i18n.t('task.overlaps'))}">${ICONS.warn}</span>` : ''
   ].join('');
 
   const when = task.all_day
@@ -724,7 +1187,7 @@ function taskCard(task, index) {
   return `
     <article class="task${done ? ' is-done' : ''}${past ? ' is-past' : ''}"
              data-id="${task.id}" data-now="${isNow}"
-             style="--c:${tint}; --lit:${lit}; --i:${index}">
+             style="--c:${tint}; --lit:${lit}; --i:${index}; view-transition-name: task-${task.id}">
       <label class="task-check" aria-label="${escapeHtml(i18n.t(done ? 'task.unmarkDone' : 'task.markDone'))}">
         <input type="checkbox" ${done ? 'checked' : ''} data-action="toggle" data-id="${task.id}">
         <span class="task-box"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
@@ -753,6 +1216,7 @@ function taskCard(task, index) {
 
 /**
  * Calendar occurrences render as read-only rows alongside the local tasks.
+ * The whole row opens the event's details.
  * @param {Object} slot - from the agenda
  * @param {number} index
  * @returns {string} HTML
@@ -765,8 +1229,9 @@ function eventCard(slot, index) {
     : `${fmtTime(slot.start_time)} → ${fmtTime(slot.end_time)}`;
 
   return `
-    <article class="task is-calendar" data-now="${isNow}"
-             style="--c:${tint}; --lit:0.45; --i:${index}">
+    <article class="task is-calendar" data-now="${isNow}" data-key="${escapeHtml(slot.key)}"
+             role="button" tabindex="0" aria-label="${escapeHtml(`${i18n.t('event.open')}: ${slot.name}`)}"
+             style="--c:${tint}; --lit:0.45; --i:${index}; view-transition-name: ev-${slot.id}">
       <span class="task-check" aria-hidden="true">
         <span class="task-box">${ICONS.calendar}</span>
       </span>
@@ -779,7 +1244,7 @@ function eventCard(slot, index) {
         <div class="task-meta mono">
           <span>${escapeHtml(when)}</span>
           <span class="sep" aria-hidden="true"></span>
-          <span class="task-days">${escapeHtml(i18n.t('calendar.readOnly'))}</span>
+          <span class="task-days">${escapeHtml(slot.location || i18n.t('calendar.readOnly'))}</span>
         </div>
       </div>
       <div class="task-actions"></div>
@@ -860,20 +1325,22 @@ function calendarRow(cal) {
   const tint = rgbTriplet(cal.led_color, '224, 163, 74');
   const meta = [
     cal.last_error
-      ? `<span class="err" title="${escapeHtml(cal.last_error)}">${escapeHtml(i18n.t('calendar.error'))}</span>`
+      ? `<span class="err">${escapeHtml(i18n.t('calendar.error'))}</span>`
       : escapeHtml(i18n.t('calendar.events', { n: cal.event_count })),
     cal.enabled ? escapeHtml(fmtRelative(cal.last_sync)) : escapeHtml(i18n.t('calendar.paused'))
   ].join(' <span class="sep" aria-hidden="true">·</span> ');
 
   return `
-    <div class="cal${cal.enabled ? '' : ' is-off'}" style="--c:${tint}" data-id="${cal.id}">
+    <div class="cal${cal.enabled ? '' : ' is-off'}" style="--c:${tint}; view-transition-name: cal-${cal.id}" data-id="${cal.id}">
       <span class="cal-dot" aria-hidden="true"></span>
       <div class="cal-body">
         <span class="cal-name">${escapeHtml(cal.name)}</span>
         <span class="cal-meta mono">${meta}</span>
+        ${cal.last_error ? `<span class="cal-error">${escapeHtml(cal.last_error)}</span>` : ''}
       </div>
       <div class="cal-actions">
         <button class="task-action" type="button" data-cal-action="toggle" data-id="${cal.id}"
+                aria-pressed="${cal.enabled ? 'true' : 'false'}"
                 aria-label="${escapeHtml(i18n.t(cal.enabled ? 'calendar.disable' : 'calendar.enable'))}"
                 title="${escapeHtml(i18n.t(cal.enabled ? 'calendar.disable' : 'calendar.enable'))}">${ICONS.power}</button>
         <button class="task-action danger" type="button" data-cal-action="delete" data-id="${cal.id}"
@@ -896,7 +1363,11 @@ function renderCalendars() {
 
 /**
  * Write markup only when it actually changed, and mark the container so the
- * CSS entry animations run on the first paint instead of on every poll.
+ * CSS entry animations run on the first paint instead of on every refresh.
+ *
+ * Rewriting innerHTML destroys the focused element, so whatever control had
+ * focus inside the container is found again in the new markup and refocused —
+ * otherwise ticking a checkbox with the keyboard throws focus to <body>.
  * @param {HTMLElement} container
  * @param {string} html
  * @param {string} key - slot in `state.painted`
@@ -904,10 +1375,41 @@ function renderCalendars() {
 function paint(container, html, key) {
   if (state.painted[key] === html) return;
 
+  const focused = document.activeElement;
+  let selector = null;
+  if (focused && focused !== container && container.contains(focused)) {
+    const { id, key: slotKey, action, calAction } = focused.dataset;
+    if (action && id) selector = `[data-action="${action}"][data-id="${id}"]`;
+    else if (calAction && id) selector = `[data-cal-action="${calAction}"][data-id="${id}"]`;
+    else if (slotKey) selector = `[data-key="${CSS.escape(slotKey)}"]`;
+    else if (action) selector = `[data-action="${action}"]`;
+  }
+
   const first = state.painted[key] === null;
   state.painted[key] = html;
   container.innerHTML = html;
   container.classList.toggle('is-first-paint', first);
+
+  if (selector) container.querySelector(selector)?.focus({ preventScroll: true });
+}
+
+/**
+ * Run a DOM update inside a View Transition when the browser supports it, so
+ * cards glide to their new place (e.g. into "Completed") instead of jumping.
+ * @param {Function} update
+ * @returns {Promise<void>}
+ */
+function withTransition(update) {
+  if (!document.startViewTransition || !motionOk() || document.hidden) {
+    update();
+    return Promise.resolve();
+  }
+  const transition = document.startViewTransition(update);
+  // A transition is skipped when another one starts; that is not an error
+  transition.ready.catch(() => {});
+  transition.finished.catch(() => {});
+  // Resolve once the DOM is updated — callers must not wait for the animation
+  return transition.updateCallbackDone.catch(() => {});
 }
 
 // ───────────────────────────────────────────────────────── Config panel ─────
@@ -929,8 +1431,8 @@ function syncConfigUI() {
 function paintSlider(input) {
   const min = Number(input.min) || 0;
   const max = Number(input.max) || 100;
-  const pct = ((Number(input.value) - min) / (max - min)) * 100;
-  input.style.backgroundSize = `${pct}% 100%`;
+  const p = ((Number(input.value) - min) / (max - min)) * 100;
+  input.style.backgroundSize = `${p}% 100%`;
 }
 
 function updateDateLabel() {
@@ -941,37 +1443,122 @@ function updateDateLabel() {
 
   let text;
   try {
-    text = new Intl.DateTimeFormat(locale, opts).format(new Date());
+    text = new Intl.DateTimeFormat(locale, opts).format(new Date(Date.now() + state.clockSkew));
   } catch {
     text = new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' });
   }
   el.dateLabel.textContent = i18n.t('app.today', { date: text.charAt(0).toUpperCase() + text.slice(1) });
 }
 
+// ─────────────────────────────────────────────────────── E-ink mirror ───────
+
+let previewSignature = null;
+let previewUrl = null;
+let previewLoading = false;
+let previewQueued = false;
+let updatingTimer = null;
+
+/** Cheap FNV-1a over the PNG bytes — frames are a few KB. */
+function signature(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${bytes.length}:${hash >>> 0}`;
+}
+
+/** Flag the mirror as "updating" until the next frame lands. */
+function markUpdating() {
+  el.einkStatus.textContent = i18n.t('device.updating');
+  el.einkStatus.classList.add('is-on');
+  clearTimeout(updatingTimer);
+  updatingTimer = setTimeout(clearUpdating, 8000);
+}
+
+function clearUpdating() {
+  clearTimeout(updatingTimer);
+  el.einkStatus.classList.remove('is-on');
+  el.einkStatus.textContent = '';
+}
+
 /**
  * Re-fetch the e-ink mirror.
  *
- * The device renders the frame asynchronously, so after a change the preview is
- * fetched again a moment later to pick up the new artwork rather than the frame
- * that was on screen when the request went out.
+ * The frame is downloaded and compared byte-for-byte with the one on screen;
+ * only a real change is swapped in, with the black/white flash of a physical
+ * e-ink refresh. After a mutation the device renders asynchronously — the
+ * `frame` event on the live stream announces the new artwork; without a stream
+ * the preview is re-fetched a couple of times instead.
  * @param {boolean} [afterChange=false]
  */
 function refreshEinkPreview(afterChange = false) {
-  // Decode into a detached Image first and only swap the visible src once it is
-  // ready — assigning src directly blanks the frame while the new PNG loads.
-  const load = () => {
-    const url = `${API}/api/display/preview.png?t=${Date.now()}`;
+  if (afterChange) {
+    markUpdating();
+    if (!state.streamOpen) {
+      setTimeout(loadPreview, 1200);
+      setTimeout(() => loadPreview({ settle: true }), 3500);
+    }
+  }
+  loadPreview();
+}
+
+/**
+ * @param {Object} [opts]
+ * @param {boolean} [opts.settle=false] - the device has finished rendering, so
+ *        drop the "updating" flag even if the frame turned out identical
+ */
+async function loadPreview(opts = {}) {
+  const { settle = false } = opts;
+  if (previewLoading) {
+    // A newer frame was announced mid-download: fetch again right after
+    previewQueued = true;
+    return;
+  }
+  previewLoading = true;
+  try {
+    const res = await fetch(`${API}/api/display/preview.png?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buffer = await res.arrayBuffer();
+    const sig = signature(buffer);
+    if (sig === previewSignature) return;
+
+    const first = previewSignature === null;
+    previewSignature = sig;
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'image/png' }));
+
+    // Decode off-screen first so the swap never shows a blank frame
     const probe = new Image();
-    probe.onload = () => {
+    probe.src = url;
+    await probe.decode();
+
+    const swap = () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = url;
       el.einkPreview.src = url;
       el.einkPreview.style.visibility = 'visible';
     };
-    probe.src = url;
-  };
-  load();
-  if (afterChange) {
-    setTimeout(load, 1200);
-    setTimeout(load, 3500);
+
+    if (first || !motionOk()) {
+      swap();
+    } else {
+      el.einkBezel.classList.remove('is-flashing');
+      void el.einkBezel.offsetWidth;
+      el.einkBezel.classList.add('is-flashing');
+      // Swap at the peak of the flash, when the panel is fully inverted
+      setTimeout(swap, 180);
+    }
+    clearUpdating();
+  } catch {
+    if (previewSignature === null) el.einkPreview.style.visibility = 'hidden';
+  } finally {
+    previewLoading = false;
+    if (settle) clearUpdating();
+    if (previewQueued) {
+      previewQueued = false;
+      loadPreview(opts);
+    }
   }
 }
 
@@ -979,6 +1566,7 @@ function refreshEinkPreview(afterChange = false) {
 
 function renderAll() {
   renderNow();
+  renderTimelineScale();
   renderTimeline();
   renderTasks();
   renderCalendars();
@@ -988,15 +1576,27 @@ function renderAll() {
 
 // ─────────────────────────────────────────────────────── Task mutations ─────
 
-async function toggleDone(id) {
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function toggleDone(id, input) {
+  const card = input?.closest('.task');
+  const completing = input?.checked;
+  // Let the tick draw and the strike-through sweep before the card moves
+  if (card && completing && motionOk()) card.classList.add('is-completing');
+
   try {
-    const { data } = await api(`/api/tasks/${id}/done`, { method: 'PATCH' });
+    const [{ data }] = await Promise.all([
+      api(`/api/tasks/${id}/done`, { method: 'PATCH' }),
+      completing && motionOk() ? sleep(420) : null
+    ]);
     const index = state.tasks.findIndex(t => t.id === Number(id));
     if (index !== -1) state.tasks[index] = data;
     await loadStatus();
-    renderAll();
+    await withTransition(renderAll);
     refreshEinkPreview(true);
   } catch (error) {
+    card?.classList.remove('is-completing');
+    if (input) input.checked = !input.checked;
     toast(error.message || i18n.t('notifications.errorUpdateTask'), { type: 'error' });
   }
 }
@@ -1008,12 +1608,14 @@ async function toggleDone(id) {
  */
 async function deleteTask(id) {
   const card = el.tasksList.querySelector(`.task[data-id="${id}"]`);
-  if (card) card.classList.add('removing');
+  const animated = Boolean(document.startViewTransition) && motionOk();
+  // Without View Transitions the card fades out on its own
+  if (card && !animated) card.classList.add('removing');
 
   try {
     const { data: removed } = await api(`/api/tasks/${id}`, { method: 'DELETE' });
     await Promise.all([loadTasks(), loadStatus()]);
-    renderAll();
+    await withTransition(renderAll);
     refreshEinkPreview(true);
 
     toast(i18n.t('notifications.taskDeleted'), {
@@ -1028,23 +1630,24 @@ async function deleteTask(id) {
   }
 }
 
+function taskPayload(task, overrides = {}) {
+  return {
+    name: task.name,
+    start_time: task.start_time,
+    end_time: task.end_time,
+    led_color: task.led_color,
+    active_days: task.active_days,
+    all_day: task.all_day,
+    ...overrides
+  };
+}
+
 async function restoreTask(task) {
   if (!task) return;
   try {
-    await api('/api/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: task.name,
-        start_time: task.start_time,
-        end_time: task.end_time,
-        led_color: task.led_color,
-        active_days: task.active_days,
-        all_day: task.all_day
-      })
-    });
+    await api('/api/tasks', jsonBody('POST', taskPayload(task)));
     await Promise.all([loadTasks(), loadStatus()]);
-    renderAll();
+    await withTransition(renderAll);
     refreshEinkPreview(true);
     toast(i18n.t('notifications.taskRestored'));
   } catch (error) {
@@ -1052,38 +1655,78 @@ async function restoreTask(task) {
   }
 }
 
-// ─────────────────────────────────────────────────────────── Task sheet ─────
+async function duplicateTask(id) {
+  const task = state.tasks.find(t => t.id === Number(id));
+  if (!task) return;
+  try {
+    const name = i18n.t('task.copySuffix', { name: task.name }).slice(0, 80);
+    const { data } = await api('/api/tasks', jsonBody('POST', taskPayload(task, { name })));
+    await Promise.all([loadTasks(), loadStatus()]);
+    closeSheet(el.taskSheet);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
+    toast(i18n.t('notifications.taskDuplicated'), {
+      action: { label: i18n.t('task.editAction'), onClick: () => editTask(data.id) }
+    });
+  } catch (error) {
+    toast(error.message || i18n.t('notifications.errorCreateTask'), { type: 'error' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────── Sheets ─────
 
 let lastFocused = null;
 
 function openSheet(sheet) {
-  lastFocused = document.activeElement;
+  // One dialog at a time
+  openSheets().filter(s => s !== sheet).forEach(s => closeSheet(s, { restoreFocus: false }));
+  if (!openSheets().length) lastFocused = document.activeElement;
+  clearTimeout(sheet._closeTimer);
+  // Tracked synchronously: the .is-open class only lands on the next frame
+  sheet.dataset.open = 'true';
   sheet.hidden = false;
   el.scrim.hidden = false;
+  sheet.style.translate = '';
   requestAnimationFrame(() => {
     sheet.classList.add('is-open');
     el.scrim.classList.add('is-open');
   });
   document.body.style.overflow = 'hidden';
   setTimeout(() => {
-    const first = sheet.querySelector('input:not([type="hidden"]):not([type="color"]), button');
-    first?.focus();
+    // Straight into the first field with a keyboard; on touch the sheet itself
+    // takes focus so the on-screen keyboard does not jump up uninvited
+    const field = sheet.querySelector('input:not([type="hidden"]):not([type="color"]):not([type="checkbox"])');
+    if (field && !coarsePointer.matches) {
+      field.focus();
+    } else {
+      sheet.setAttribute('tabindex', '-1');
+      sheet.focus({ preventScroll: true });
+    }
   }, 280);
 }
 
-function closeSheet(sheet) {
+function closeSheet(sheet, opts = {}) {
+  const { restoreFocus = true } = opts;
+  if (sheet.dataset.open !== 'true') return;
+  delete sheet.dataset.open;
   sheet.classList.remove('is-open');
-  el.scrim.classList.remove('is-open');
-  document.body.style.overflow = '';
-  setTimeout(() => {
+  sheet.style.translate = '';
+  const others = openSheets().length > 0;
+  if (!others) {
+    el.scrim.classList.remove('is-open');
+    document.body.style.overflow = '';
+  }
+  sheet._closeTimer = setTimeout(() => {
     sheet.hidden = true;
-    el.scrim.hidden = true;
-    lastFocused?.focus?.();
+    if (!openSheets().length) {
+      el.scrim.hidden = true;
+      if (restoreFocus) lastFocused?.focus?.();
+    }
   }, 260);
 }
 
 function openSheets() {
-  return [el.taskSheet, el.calendarSheet].filter(s => s.classList.contains('is-open'));
+  return SHEETS.filter(s => s.dataset.open === 'true');
 }
 
 /** Keep Tab inside an open dialog. */
@@ -1106,11 +1749,51 @@ function trapFocus(event) {
   }
 }
 
+/**
+ * Bottom sheets on phones can be dragged down by their grip or header to close.
+ * @param {HTMLElement} sheet
+ */
+function enableSwipeToClose(sheet) {
+  const handles = [sheet.querySelector('.sheet-grip'), sheet.querySelector('.sheet-head')].filter(Boolean);
+  let start = null;
+
+  const onDown = (event) => {
+    if (window.innerWidth >= 720 || event.target.closest('button')) return;
+    start = { y: event.clientY, t: performance.now(), dy: 0 };
+    sheet.classList.add('is-dragging');
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onMove = (event) => {
+    if (!start) return;
+    start.dy = Math.max(0, event.clientY - start.y);
+    sheet.style.translate = `0 ${start.dy}px`;
+  };
+  const onUp = () => {
+    if (!start) return;
+    const { dy, t } = start;
+    start = null;
+    sheet.classList.remove('is-dragging');
+    const velocity = dy / Math.max(1, performance.now() - t);
+    if (dy > 110 || velocity > 0.6) closeSheet(sheet);
+    else sheet.style.translate = '';
+  };
+
+  handles.forEach(handle => {
+    handle.addEventListener('pointerdown', onDown);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  });
+}
+
+// ─────────────────────────────────────────────────────────── Task sheet ─────
+
 function setAllDay(on) {
   el.allDayCheck.checked = on;
   el.timeRow.hidden = on;
   el.startTime.required = !on;
   el.endTime.required = !on;
+  updateTimeSummary();
 }
 
 function setDays(daysStr) {
@@ -1118,6 +1801,7 @@ function setDays(daysStr) {
   el.dayPicker.querySelectorAll('input[name="activeDays"]').forEach(cb => {
     cb.checked = days.includes(cb.value);
   });
+  updateTimeSummary();
 }
 
 function getDays() {
@@ -1127,10 +1811,39 @@ function getDays() {
     .join(',');
 }
 
+/** Live "lasts 1 h · crosses midnight" line plus any clash with other tasks. */
+function updateTimeSummary() {
+  const start = el.startTime.value;
+  const end = el.endTime.value;
+  if (el.allDayCheck.checked || !start || !end || start === end) {
+    el.timeSummary.hidden = true;
+    return;
+  }
+
+  const s = timeToMinutes(start);
+  const e = timeToMinutes(end);
+  const crosses = e < s;
+  const parts = [i18n.t('task.duration', { time: fmtDuration(crosses ? e + DAY - s : e - s) })];
+  if (crosses) parts.push(i18n.t('task.crossesMidnight'));
+  el.timeSummaryText.textContent = parts.join(' · ');
+
+  const clashes = overlappingTasks({
+    id: state.editingId,
+    start_time: start,
+    end_time: end,
+    active_days: getDays()
+  });
+  el.timeSummaryWarn.hidden = clashes.length === 0;
+  el.timeSummaryWarn.textContent = clashes.length
+    ? i18n.t('task.overlapsWith', { names: clashes.map(t => t.name).join(', ') })
+    : '';
+  el.timeSummary.hidden = false;
+}
+
 function setLedOff(off) {
   state.ledOff = off;
-  el.ledOffBtn.dataset.on = String(off);
-  el.ledOffBtn.querySelector('.toggle-text').textContent = i18n.t(off ? 'task.ledOn' : 'task.ledOff');
+  el.ledOnCheck.checked = !off;
+  el.colorRow.classList.toggle('is-off', off);
   if (off) {
     el.ledColor.value = 'null';
   } else {
@@ -1146,11 +1859,16 @@ function syncColor() {
   if (!state.ledOff) el.ledColor.value = `${rgb.r},${rgb.g},${rgb.b}`;
   el.colorValue.textContent = hex.toUpperCase();
   el.colorSwatch.style.setProperty('--glow', `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.75)`);
+  el.colorPresets.querySelectorAll('.preset').forEach(preset => {
+    const on = preset.dataset.hex === hex.toLowerCase();
+    preset.classList.toggle('is-on', on);
+    preset.setAttribute('aria-pressed', String(on));
+  });
 }
 
 function buildPresets() {
   el.colorPresets.innerHTML = LED_PRESETS.map(hex =>
-    `<button type="button" class="preset" style="background:${hex}; color:${hex}" data-hex="${hex}" aria-label="${hex}"></button>`
+    `<button type="button" class="preset" style="background:${hex}; color:${hex}" data-hex="${hex}" aria-label="${hex}" aria-pressed="false"></button>`
   ).join('');
 }
 
@@ -1166,27 +1884,34 @@ function showHint(node, message) {
   node.classList.add('form-hint');
 }
 
+function setTaskSaving(saving) {
+  state.saving = saving;
+  el.taskSubmitBtn.disabled = saving;
+  el.duplicateTaskBtn.disabled = saving;
+  el.taskSubmitBtn.textContent = i18n.t(saving ? 'task.saving' : 'task.save');
+}
+
 function newTask() {
   state.editingId = null;
   el.taskForm.reset();
   el.taskId.value = '';
   el.sheetTitle.textContent = i18n.t('task.new');
+  el.duplicateTaskBtn.hidden = true;
   el.ledColorPicker.value = LED_PRESETS[Math.floor(Math.random() * LED_PRESETS.length)];
   setLedOff(false);
   syncColor();
-  setAllDay(false);
-  setDays('0,1,2,3,4,5,6');
   showHint(el.formHint, null);
+  setTaskSaving(false);
 
   // Pre-fill a sensible window: the next round hour on the *device's* clock,
   // one hour long. Using the device time matters when the browser sits in a
   // different timezone from the Pi.
-  const deviceHour = state.status?.currentTime
-    ? parseInt(state.status.currentTime.split(':')[0], 10)
-    : new Date().getHours();
+  const deviceHour = Math.floor(nowMinutes() / 60);
   const pad = (n) => String(n).padStart(2, '0');
   el.startTime.value = `${pad((deviceHour + 1) % 24)}:00`;
   el.endTime.value = `${pad((deviceHour + 2) % 24)}:00`;
+  setAllDay(false);
+  setDays('0,1,2,3,4,5,6');
 
   openSheet(el.taskSheet);
 }
@@ -1198,32 +1923,30 @@ function editTask(id) {
   state.editingId = task.id;
   el.taskId.value = task.id;
   el.sheetTitle.textContent = i18n.t('task.edit');
+  el.duplicateTaskBtn.hidden = false;
   el.taskName.value = task.name;
-  setAllDay(Boolean(task.all_day));
   el.startTime.value = task.all_day ? '' : task.start_time;
   el.endTime.value = task.all_day ? '' : task.end_time;
+  setAllDay(Boolean(task.all_day));
   setDays(task.active_days || '0,1,2,3,4,5,6');
   showHint(el.formHint, null);
+  setTaskSaving(false);
 
   const rgb = parseRgb(task.led_color);
-  if (rgb) {
-    el.ledColorPicker.value = rgbToHex(rgb.r, rgb.g, rgb.b);
-    setLedOff(false);
-    syncColor();
-  } else {
-    setLedOff(true);
-    syncColor();
-  }
+  if (rgb) el.ledColorPicker.value = rgbToHex(rgb.r, rgb.g, rgb.b);
+  setLedOff(!rgb);
+  syncColor();
 
   openSheet(el.taskSheet);
 }
 
 async function submitTask(event) {
   event.preventDefault();
+  if (state.saving) return;
 
   const name = el.taskName.value.trim();
   if (!name) {
-    showHint(el.formHint, i18n.t('task.name'));
+    showHint(el.formHint, i18n.t('task.nameRequired'));
     el.taskName.focus();
     return;
   }
@@ -1235,12 +1958,14 @@ async function submitTask(event) {
   }
 
   const allDay = el.allDayCheck.checked;
-  if (!allDay && el.startTime.value === el.endTime.value) {
-    showHint(el.formHint, i18n.t('notifications.endBeforeStart'));
+  if (!allDay && (!el.startTime.value || !el.endTime.value)) {
+    showHint(el.formHint, i18n.t('task.timesRequired'));
+    (el.startTime.value ? el.endTime : el.startTime).focus();
     return;
   }
-  if (!allDay && (!el.startTime.value || !el.endTime.value)) {
+  if (!allDay && el.startTime.value === el.endTime.value) {
     showHint(el.formHint, i18n.t('notifications.endBeforeStart'));
+    el.endTime.focus();
     return;
   }
 
@@ -1254,19 +1979,18 @@ async function submitTask(event) {
   };
 
   const editing = state.editingId;
+  setTaskSaving(true);
   try {
-    await api(editing ? `/api/tasks/${editing}` : '/api/tasks', {
-      method: editing ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    await api(editing ? `/api/tasks/${editing}` : '/api/tasks', jsonBody(editing ? 'PUT' : 'POST', payload));
     await Promise.all([loadTasks(), loadStatus()]);
-    renderAll();
-    refreshEinkPreview(true);
     closeSheet(el.taskSheet);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
     toast(i18n.t(editing ? 'notifications.taskUpdated' : 'notifications.taskCreated'));
   } catch (error) {
     showHint(el.formHint, error.message);
+  } finally {
+    setTaskSaving(false);
   }
 }
 
@@ -1282,8 +2006,8 @@ function syncCalColor() {
 
 function setCalLedOff(off) {
   state.calLedOff = off;
-  el.calLedOffBtn.dataset.on = String(off);
-  el.calLedOffBtn.querySelector('.toggle-text').textContent = i18n.t(off ? 'task.ledOn' : 'task.ledOff');
+  el.calLedOnCheck.checked = !off;
+  el.calColorRow.classList.toggle('is-off', off);
 }
 
 function newCalendar() {
@@ -1297,9 +2021,14 @@ function newCalendar() {
 
 async function submitCalendar(event) {
   event.preventDefault();
+  if (el.calSubmitBtn.disabled) return;
 
   const url = el.calUrl.value.trim();
-  if (!url) return;
+  if (!url) {
+    showHint(el.calFormHint, i18n.t('calendar.urlLabel'));
+    el.calUrl.focus();
+    return;
+  }
 
   const rgb = hexToRgb(el.calColorPicker.value);
   const payload = {
@@ -1313,15 +2042,11 @@ async function submitCalendar(event) {
   showHint(el.calFormHint, null);
 
   try {
-    await api('/api/calendars', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    await api('/api/calendars', jsonBody('POST', payload));
     await Promise.all([loadCalendars(), loadStatus()]);
-    renderAll();
-    refreshEinkPreview(true);
     closeSheet(el.calendarSheet);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
     toast(i18n.t('notifications.calendarAdded'));
   } catch (error) {
     showHint(el.calFormHint, error.message);
@@ -1335,11 +2060,7 @@ async function toggleCalendar(id) {
   const cal = state.calendars.find(c => c.id === Number(id));
   if (!cal) return;
   try {
-    await api(`/api/calendars/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: cal.enabled ? 0 : 1 })
-    });
+    await api(`/api/calendars/${id}`, jsonBody('PUT', { enabled: cal.enabled ? 0 : 1 }));
     await Promise.all([loadCalendars(), loadStatus()]);
     renderAll();
     refreshEinkPreview(true);
@@ -1349,15 +2070,39 @@ async function toggleCalendar(id) {
   }
 }
 
+/**
+ * Remove without a blocking confirm, like tasks: the toast offers an undo that
+ * subscribes to the same feed again.
+ * @param {number|string} id
+ */
 async function removeCalendar(id) {
   const cal = state.calendars.find(c => c.id === Number(id));
-  if (!cal || !confirm(i18n.t('calendar.removeConfirm'))) return;
+  if (!cal) return;
   try {
     await api(`/api/calendars/${id}`, { method: 'DELETE' });
     await Promise.all([loadCalendars(), loadStatus()]);
-    renderAll();
+    await withTransition(renderAll);
     refreshEinkPreview(true);
-    toast(i18n.t('notifications.calendarRemoved'));
+    toast(i18n.t('notifications.calendarRemoved'), {
+      action: { label: i18n.t('notifications.undo'), onClick: () => restoreCalendar(cal) }
+    });
+  } catch (error) {
+    toast(error.message || i18n.t('notifications.errorCalendar'), { type: 'error' });
+  }
+}
+
+async function restoreCalendar(cal) {
+  try {
+    const { data } = await api('/api/calendars', jsonBody('POST', {
+      url: cal.url,
+      name: cal.name,
+      led_color: cal.led_color || 'null'
+    }));
+    if (!cal.enabled) await api(`/api/calendars/${data.id}`, jsonBody('PUT', { enabled: 0 }));
+    await Promise.all([loadCalendars(), loadStatus()]);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
+    toast(i18n.t('notifications.calendarRestored'));
   } catch (error) {
     toast(error.message || i18n.t('notifications.errorCalendar'), { type: 'error' });
   }
@@ -1386,31 +2131,70 @@ async function syncCalendars() {
   }
 }
 
+// ──────────────────────────────────────────────────────── Event details ─────
+
+/**
+ * iCal descriptions are plain text from most sources but HTML from Google;
+ * either way only the text is shown.
+ */
+function plainText(value) {
+  const withBreaks = String(value || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n');
+  const doc = new DOMParser().parseFromString(withBreaks, 'text/html');
+  return (doc.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function openEvent(key) {
+  const slot = state.agendaSlots.find(s => s.key === key);
+  if (!slot) return;
+
+  el.eventTitle.textContent = slot.name;
+  el.eventWhen.textContent = slot.all_day
+    ? i18n.t('task.allDay')
+    : `${fmtTime(slot.start_time)} → ${fmtTime(slot.end_time)}`;
+  el.eventCalendarName.textContent = slot.calendar_name || i18n.t('calendar.title');
+  el.eventCalendar.style.setProperty('--c', rgbTriplet(slot.led_color, '224, 163, 74'));
+
+  el.eventLocationRow.hidden = !slot.location;
+  el.eventLocation.textContent = slot.location || '';
+
+  const description = plainText(slot.description);
+  el.eventDescriptionRow.hidden = !description;
+  el.eventDescription.textContent = description;
+
+  openSheet(el.eventSheet);
+}
+
 // ──────────────────────────────────────────────────────────── Settings ──────
 
-async function saveConfig() {
-  el.saveConfigBtn.disabled = true;
+let saveStateTimer = null;
+
+function setSaveState(kind) {
+  clearTimeout(saveStateTimer);
+  el.saveState.dataset.state = kind;
+  el.saveState.textContent = kind === 'saving' ? i18n.t('settings.saving')
+    : kind === 'saved' ? i18n.t('settings.saved')
+      : i18n.t('settings.autosave');
+  if (kind === 'saved') saveStateTimer = setTimeout(() => setSaveState('idle'), 2200);
+}
+
+/**
+ * Settings save as soon as they change — there is no "save" button to forget.
+ * @param {Object} patch - config keys to write
+ */
+async function saveConfig(patch) {
+  setSaveState('saving');
   try {
-    const { data } = await api('/api/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        brightness: el.brightness.value,
-        timezone: el.timezone.value,
-        time_format: el.timeFormat.value,
-        language: el.language.value,
-        calendar_sync_minutes: el.syncInterval.value
-      })
-    });
+    const { data } = await api('/api/config', jsonBody('PUT', patch));
     state.config = data;
     await loadStatus();
     renderAll();
     refreshEinkPreview(true);
-    toast(i18n.t('notifications.configSaved'));
+    setSaveState('saved');
   } catch (error) {
+    setSaveState('idle');
     toast(error.message || i18n.t('notifications.errorSaveConfig'), { type: 'error' });
-  } finally {
-    el.saveConfigBtn.disabled = false;
+    // Put the controls back to what the device actually has
+    syncConfigUI();
   }
 }
 
@@ -1443,12 +2227,73 @@ function positionSegmentThumb() {
   thumb.style.setProperty('--w', `${active.offsetWidth}px`);
 }
 
+// ───────────────────────────────────────────────────────── Live updates ─────
+
+let refreshTimer = null;
+const pendingTopics = new Set();
+
+/**
+ * Coalesce bursts of change notifications (a mutation emits tasks + status +
+ * frame within milliseconds) into one fetch per resource.
+ * @param {string} topic
+ */
+function queueRefresh(topic) {
+  pendingTopics.add(topic);
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => {
+    const topics = new Set(pendingTopics);
+    pendingTopics.clear();
+
+    if (topics.has('frame')) loadPreview({ settle: true });
+
+    const loads = [];
+    if (topics.has('config')) loads.push(loadConfig());
+    if (topics.has('tasks')) loads.push(loadTasks());
+    if (topics.has('calendars')) loads.push(loadCalendars());
+    if (topics.has('status') || topics.has('tasks') || topics.has('calendars') || topics.has('config')) {
+      loads.push(loadStatus());
+    }
+    if (loads.length === 0) return;
+
+    try {
+      await Promise.all(loads);
+      renderAll();
+    } catch {
+      /* flagged by api() */
+    }
+  }, 150);
+}
+
+function connectStream() {
+  if (!window.EventSource || state.stream) return;
+  const stream = new EventSource(`${API}/api/events`);
+  state.stream = stream;
+
+  stream.onopen = () => {
+    state.streamOpen = true;
+  };
+  stream.onerror = () => {
+    // EventSource reconnects on its own; the poll covers the gap
+    state.streamOpen = false;
+  };
+  ['status', 'tasks', 'calendars', 'config', 'frame'].forEach(topic => {
+    stream.addEventListener(topic, () => queueRefresh(topic));
+  });
+}
+
+function disconnectStream() {
+  state.stream?.close();
+  state.stream = null;
+  state.streamOpen = false;
+}
+
 // ───────────────────────────────────────────────────────────── Events ───────
 
 el.addTaskBtn.addEventListener('click', newTask);
 el.fabBtn.addEventListener('click', newTask);
 el.closeSheetBtn.addEventListener('click', () => closeSheet(el.taskSheet));
 el.cancelSheetBtn.addEventListener('click', () => closeSheet(el.taskSheet));
+el.duplicateTaskBtn.addEventListener('click', () => duplicateTask(state.editingId));
 el.taskForm.addEventListener('submit', submitTask);
 
 el.addCalendarBtn.addEventListener('click', newCalendar);
@@ -1457,13 +2302,27 @@ el.cancelCalSheetBtn.addEventListener('click', () => closeSheet(el.calendarSheet
 el.calendarForm.addEventListener('submit', submitCalendar);
 el.syncCalendarsBtn.addEventListener('click', syncCalendars);
 
-el.scrim.addEventListener('click', () => openSheets().forEach(closeSheet));
+el.closeEventSheetBtn.addEventListener('click', () => closeSheet(el.eventSheet));
+el.shortcutsBtn.addEventListener('click', () => openSheet(el.shortcutsSheet));
+el.closeShortcutsBtn.addEventListener('click', () => closeSheet(el.shortcutsSheet));
+
+el.scrim.addEventListener('click', () => openSheets().forEach(s => closeSheet(s)));
+SHEETS.forEach(enableSwipeToClose);
 
 el.allDayCheck.addEventListener('change', () => setAllDay(el.allDayCheck.checked));
-el.ledColorPicker.addEventListener('input', syncColor);
-el.ledOffBtn.addEventListener('click', () => setLedOff(!state.ledOff));
-el.calColorPicker.addEventListener('input', syncCalColor);
-el.calLedOffBtn.addEventListener('click', () => setCalLedOff(!state.calLedOff));
+el.startTime.addEventListener('input', updateTimeSummary);
+el.endTime.addEventListener('input', updateTimeSummary);
+el.dayPicker.addEventListener('change', updateTimeSummary);
+el.ledColorPicker.addEventListener('input', () => {
+  if (state.ledOff) setLedOff(false);
+  syncColor();
+});
+el.ledOnCheck.addEventListener('change', () => setLedOff(!el.ledOnCheck.checked));
+el.calColorPicker.addEventListener('input', () => {
+  if (state.calLedOff) setCalLedOff(false);
+  syncCalColor();
+});
+el.calLedOnCheck.addEventListener('change', () => setCalLedOff(!el.calLedOnCheck.checked));
 
 el.colorPresets.addEventListener('click', (event) => {
   const hex = event.target.closest('.preset')?.dataset.hex;
@@ -1480,31 +2339,70 @@ document.querySelectorAll('.day-presets .pill-btn').forEach(btn => {
   });
 });
 
-// Delegated task list actions
+// Delegated task list actions; a click anywhere else on a row opens it
 el.tasksList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-action]');
-  if (!button) return;
-  const { action, id } = button.dataset;
-  if (action === 'edit') editTask(id);
-  else if (action === 'delete') deleteTask(id);
-  else if (action === 'show-more') {
-    state.showAllDone = !state.showAllDone;
-    renderTasks();
+  if (button) {
+    const { action, id } = button.dataset;
+    if (action === 'edit') editTask(id);
+    else if (action === 'delete') deleteTask(id);
+    else if (action === 'show-more') {
+      state.showAllDone = !state.showAllDone;
+      withTransition(renderTasks);
+    }
+    return;
+  }
+  if (event.target.closest('.task-check')) return;
+
+  const card = event.target.closest('.task');
+  if (!card) return;
+  if (card.dataset.key) openEvent(card.dataset.key);
+  else if (card.dataset.id) editTask(card.dataset.id);
+});
+
+el.tasksList.addEventListener('keydown', (event) => {
+  const card = event.target.closest('.task.is-calendar');
+  if (card && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    openEvent(card.dataset.key);
   }
 });
 
 el.tasksList.addEventListener('change', (event) => {
   const input = event.target.closest('input[data-action="toggle"]');
-  if (input) toggleDone(input.dataset.id);
+  if (input) toggleDone(input.dataset.id, input);
 });
 
-// Timeline blocks jump to the matching task
+// Timeline: click opens the task or event, drag reschedules
 el.timelineTrack.addEventListener('click', (event) => {
+  if (suppressClick) {
+    suppressClick = false;
+    return;
+  }
   const block = event.target.closest('.timeline-block');
   if (!block) return;
   const key = block.dataset.key;
   if (key?.startsWith('task:')) editTask(key.slice(5));
+  else if (key?.startsWith('event:')) openEvent(key);
 });
+el.timelineTrack.addEventListener('pointerdown', onTimelinePointerDown);
+el.timelineTrack.addEventListener('pointermove', onTimelinePointerMove);
+el.timelineTrack.addEventListener('pointerup', onTimelinePointerUp);
+el.timelineTrack.addEventListener('pointercancel', onTimelinePointerUp);
+el.timelineTrack.addEventListener('pointerover', (event) => {
+  const block = event.target.closest('.timeline-block');
+  if (block && !drag) showTip(block, block.dataset.draggable
+    ? `${block.dataset.tip} — ${i18n.t('timeline.dragHint')}`
+    : block.dataset.tip);
+});
+el.timelineTrack.addEventListener('pointerout', (event) => {
+  if (!drag && event.target.closest('.timeline-block')) hideTip();
+});
+el.timelineTrack.addEventListener('focusin', (event) => {
+  const block = event.target.closest('.timeline-block');
+  if (block) showTip(block);
+});
+el.timelineTrack.addEventListener('focusout', hideTip);
 
 // Calendar row actions
 el.calendarList.addEventListener('click', (event) => {
@@ -1519,10 +2417,13 @@ el.calendarList.addEventListener('click', (event) => {
 el.scopeSwitch.addEventListener('click', (event) => {
   const button = event.target.closest('.segmented-btn');
   if (!button) return;
-  el.scopeSwitch.querySelectorAll('.segmented-btn').forEach(b => b.classList.toggle('is-on', b === button));
+  el.scopeSwitch.querySelectorAll('.segmented-btn').forEach(b => {
+    b.classList.toggle('is-on', b === button);
+    b.setAttribute('aria-pressed', String(b === button));
+  });
   state.scope = button.dataset.scope;
   positionSegmentThumb();
-  renderTasks();
+  withTransition(renderTasks);
 });
 
 // Search (debounced)
@@ -1535,36 +2436,60 @@ el.searchInput.addEventListener('input', () => {
   }, 140);
 });
 
+// Settings save themselves; the slider waits for the hand to settle
+let brightnessTimer;
 el.brightness.addEventListener('input', (event) => {
   el.brightnessValue.textContent = `${event.target.value}%`;
   paintSlider(event.target);
+  clearTimeout(brightnessTimer);
+  brightnessTimer = setTimeout(() => saveConfig({ brightness: event.target.value }), 250);
 });
 
-el.timezone.addEventListener('change', () => updateDst(el.timezone.value));
+el.timezone.addEventListener('change', () => {
+  updateDst(el.timezone.value);
+  saveConfig({ timezone: el.timezone.value });
+});
 el.timeFormat.addEventListener('change', () => {
   state.config.time_format = el.timeFormat.value;
-  renderTimelineScale();
+  state.lastClock = null;
   renderAll();
+  saveConfig({ time_format: el.timeFormat.value });
 });
-
 el.language.addEventListener('change', async () => {
   await i18n.load(el.language.value);
   i18n.apply();
+  state.config.language = el.language.value;
   fillTimezones(el.timezone.value || state.config.timezone);
-  setLedOff(state.ledOff);
-  setCalLedOff(state.calLedOff);
+  setTaskSaving(state.saving);
   renderAll();
+  saveConfig({ language: el.language.value });
 });
+el.syncInterval.addEventListener('change', () => saveConfig({ calendar_sync_minutes: el.syncInterval.value }));
 
-el.saveConfigBtn.addEventListener('click', saveConfig);
 el.refreshStatusBtn.addEventListener('click', refreshDevice);
-el.devRefreshBtn.addEventListener('click', refreshDevice);
 
 // A broken preview image should not leave an empty frame
 el.einkPreview.addEventListener('error', () => { el.einkPreview.style.visibility = 'hidden'; });
-el.einkPreview.addEventListener('load', () => { el.einkPreview.style.visibility = 'visible'; });
 
-window.addEventListener('resize', positionSegmentThumb);
+let resizeTimer;
+window.addEventListener('resize', () => {
+  positionSegmentThumb();
+  clearTimeout(resizeTimer);
+  // The timeline zooms to 12 h on narrow screens
+  resizeTimer = setTimeout(() => {
+    renderTimelineScale();
+    renderTimeline();
+  }, 120);
+});
+
+// The compose button slides away while scrolling down so it never hides a row
+let lastScrollY = window.scrollY;
+window.addEventListener('scroll', () => {
+  const y = window.scrollY;
+  if (Math.abs(y - lastScrollY) < 8) return;
+  el.fabBtn.classList.toggle('is-hidden', y > lastScrollY && y > 120);
+  lastScrollY = y;
+}, { passive: true });
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (event) => {
@@ -1573,7 +2498,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     const open = openSheets();
     if (open.length) {
-      open.forEach(closeSheet);
+      open.forEach(s => closeSheet(s));
       return;
     }
   }
@@ -1591,6 +2516,9 @@ document.addEventListener('keydown', (event) => {
   } else if (event.key === 'r' || event.key === 'R') {
     event.preventDefault();
     refreshDevice();
+  } else if (event.key === '?') {
+    event.preventDefault();
+    openSheet(el.shortcutsSheet);
   }
 });
 
@@ -1598,14 +2526,41 @@ document.addEventListener('keydown', (event) => {
 
 async function poll() {
   try {
-    await loadStatus();
-    renderNow();
-    renderTimeline();
-    renderTasks();
+    await Promise.all([loadStatus(), loadTasks(), loadCalendars()]);
+    renderAll();
   } catch {
     /* setOnline already flagged it; the next tick will retry */
   }
 }
+
+const timers = { poll: null, preview: null, tick: null };
+
+function startLoops() {
+  stopLoops();
+  timers.poll = setInterval(poll, POLL_MS);
+  timers.preview = setInterval(loadPreview, 60000);
+  timers.tick = setInterval(tick, 1000);
+  connectStream();
+}
+
+function stopLoops() {
+  Object.keys(timers).forEach(key => {
+    clearInterval(timers[key]);
+    timers[key] = null;
+  });
+  disconnectStream();
+}
+
+// A hidden tab stops polling, streaming and animating; coming back catches up
+document.addEventListener('visibilitychange', () => {
+  root.classList.toggle('is-paused', document.hidden);
+  if (document.hidden) {
+    stopLoops();
+  } else {
+    startLoops();
+    refreshAll();
+  }
+});
 
 async function init() {
   buildPresets();
@@ -1615,6 +2570,8 @@ async function init() {
   try {
     await loadConfig();
   } catch (error) {
+    await i18n.load('es');
+    i18n.apply();
     toast(error.message || i18n.t('notifications.errorLoadConfig'), { type: 'error' });
   }
 
@@ -1625,13 +2582,8 @@ async function init() {
   }
 
   renderAll();
-  refreshEinkPreview();
-
-  // The device ticks once a minute; polling a little faster keeps the clock,
-  // the progress bar and the playhead honest without hammering the Pi.
-  setInterval(poll, 15000);
-  setInterval(refreshEinkPreview, 60000);
-  setInterval(updateDateLabel, 60000);
+  loadPreview();
+  if (!document.hidden) startLoops();
 }
 
 init();

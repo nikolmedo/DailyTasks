@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { t } = require('./i18n');
+const events = require('./events');
 
 const PYTHON = '/opt/distiller-sdk/.venv/bin/python3';
 const SDK_ENV = {
@@ -29,6 +30,10 @@ const PAYLOAD_PATH = path.join(__dirname, '../database/display_payload.json');
 // minutes and ride on partial refreshes, which are quiet and fast but leave
 // ghosting — so a full refresh is forced back in after a run of them.
 const MAX_PARTIALS_BEFORE_FULL = 20;
+
+// When the preview PNG was last written and when the physical panel last changed
+let lastRenderAt = null;
+let lastPushAt = null;
 
 let lastFrameHash = null;
 let lastContentHash = null;
@@ -129,7 +134,9 @@ function pump() {
       return finish({ rendered: false, pushed: false, mode, image: output, error: detail });
     }
 
+    lastRenderAt = new Date().toISOString();
     if (shouldPush) {
+      lastPushAt = lastRenderAt;
       lastFrameHash = frameHash;
       lastContentHash = contentHash;
       partialsSinceFull = mode === 'partial' ? partialsSinceFull + 1 : 0;
@@ -138,6 +145,7 @@ function pump() {
       }
     }
 
+    if (output === IMAGE_PATH) events.emit('frame', { pushed: shouldPush, mode });
     finish({ rendered: true, pushed: shouldPush, mode, image: output });
   });
 }
@@ -311,8 +319,17 @@ function getRenderedImagePath() {
   return fs.existsSync(IMAGE_PATH) ? IMAGE_PATH : null;
 }
 
+/**
+ * Timestamps for the device panel readout.
+ * @returns {{lastRenderAt: string|null, lastPushAt: string|null}}
+ */
+function getDisplayState() {
+  return { lastRenderAt, lastPushAt };
+}
+
 module.exports = {
   renderFrame,
+  getDisplayState,
   buildPayload,
   showSnapshot,
   showBootScreen,

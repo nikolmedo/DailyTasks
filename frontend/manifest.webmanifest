@@ -1,0 +1,13 @@
+{
+  "name": "Daily Tasks",
+  "short_name": "Daily Tasks",
+  "description": "Control panel for the Daily Tasks Distiller appliance",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0c0e",
+  "theme_color": "#0b0c0e",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

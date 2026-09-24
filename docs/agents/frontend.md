@@ -16,7 +16,8 @@ change — the server does not need restarting.
   `editingId`, `ledOff`, `calLedOff`, `online`, and `painted`.
 - **`state.painted` is a repaint guard.** Renderers build an HTML string, compare it to
   the last painted string for that list, and skip the DOM write when identical —
-  otherwise the 15-second poll would restart entry animations and make the page flicker.
+  otherwise every live refresh would restart entry animations and make the page flicker.
+  `paint()` also restores focus to the same control (matched by `data-action`/`data-id`/`data-key`).
   Any new list renderer should use the same `paint(container, html, key)` path.
 - **All fetches go through `api(path, options)`**, which unwraps the envelope, throws on
   `success: false`, and flips the connection pill via `setOnline()`.
@@ -25,35 +26,47 @@ change — the server does not need restarting.
 
 | Interval | Work |
 |---|---|
-| 15 s | `poll()` → `/api/status` → re-render "now", timeline, task list |
-| 60 s | `refreshEinkPreview()` → re-request `/api/display/preview.png` with a cache-busting query |
-| 60 s | `updateDateLabel()` → header date, in the **device** timezone, not the browser's |
+| live | `connectStream()` → `EventSource('/api/events')` → `queueRefresh(topic)` coalesces bursts and re-fetches only the changed resources |
+| 1 s | `tick()` → local clock (device zone + server `epoch` skew), "now" playhead, "updated x ago" |
+| 30 s | `poll()` → status + tasks + calendars — safety net if the stream drops |
+| 60 s | `loadPreview()` → fetches the PNG, compares a byte hash, swaps (with an e-ink flash) only when it changed |
+
+All loops stop while the tab is hidden (`visibilitychange`) and catch up on return; the
+`.is-paused` class on `<html>` pauses CSS animations. Offline shows `#offlineBar`.
+| every render | `updateDateLabel()` → header date, in the **device** timezone, not the browser's |
 
 ## Render functions
 
 | Function | Paints |
 |---|---|
 | `renderNow()` | The "now instrument": status tag, source tag, title, clock, range, remaining, progress, next |
-| `renderTimeline()` + `packRows()` + `renderTimelineScale()` | The day strip. `packRows` greedily packs overlapping slots onto rows; all-day slots get their own full-width row |
+| `renderTimeline()` + `slotSegments()` + `packRows()` + `renderTimelineScale()` | The day strip. A slot crossing midnight is drawn as two pieces (00:00→end, start→24:00), matching `agenda.js`. `timelineWindow()` zooms to 12 h around now below 620 px. Task blocks can be dragged (move) or edge-dragged (resize) with a mouse/pen in 5-min steps → `updateTaskTimes()` with an undo toast; touch taps open the editor |
 | `renderTasks()` + `taskCard()` + `eventCard()` + `emptyState()` | The list, with Today/All scope, search filter, and a collapsed "completed" section (`DONE_LIMIT = 5`) |
 | `renderCalendars()` + `calendarRow()` | Subscriptions with sync state and error badges |
 | `syncConfigUI()` | Settings controls from `state.config` |
-| `applyTint(ledColor)` | Re-tints the whole interface from the active slot's LED colour (`liftForScreen()` raises lightness so dark LED colours stay legible on screen) |
+| `renderDevice()` | LED readout (real colour + brightness from `status.device.led`), "updated x ago" from `status.device.display` |
+| `applyTint(ledColor)` | Re-tints the whole interface from the active slot's LED colour. `liftForScreen()` mixes towards the bone ink until WCAG contrast ≥ 4.5 against `--bg-1`; `--on-led` picks dark/light text for accent fills. It writes the `@property`-registered channels `--led-r/g/b`, so the tint animates |
 | `renderAll()` | All of the above |
 
 ## Sheets (dialogs)
 
-`openSheet` / `closeSheet` manage `.is-open`, the scrim, focus restoration
-(`lastFocused`) and `trapFocus()` for Tab cycling. Two sheets exist: `#taskSheet`
-(`newTask()` / `editTask(id)` / `submitTask()`) and `#calendarSheet` (`newCalendar()` /
-`submitCalendar()`). Validation errors surface inline through `showHint(node, message)`.
+`openSheet` / `closeSheet` manage `data-open` (synchronous) and `.is-open` (animation), the
+scrim, focus restoration (`lastFocused`), `trapFocus()` for Tab cycling and swipe-down to
+close on phones. Sheets (`SHEETS`): `#taskSheet` (`newTask()` / `editTask(id)` /
+`submitTask()`, plus *Duplicate* when editing), `#calendarSheet` (`newCalendar()` /
+`submitCalendar()`), `#eventSheet` (`openEvent(key)`, read-only calendar event details) and
+`#shortcutsSheet`. Validation errors surface inline through `showHint(node, message)`.
+
+Mutations re-render through `withTransition(renderAll)` — a View Transition where supported;
+cards carry `view-transition-name: task-<id>` / `ev-<id>` / `cal-<id>` so they glide.
 
 Deleting a task shows a toast with an **undo** action that re-creates the row from the
 payload the API echoed back (`restoreTask`) — keep that echo if you touch `DELETE /api/tasks/:id`.
+Removing a calendar works the same way (`restoreCalendar` subscribes to the URL again).
 
 ## Keyboard shortcuts
 
-`N` new task · `/` focus search · `R` refresh device · `Esc` close sheet.
+`N` new task · `/` focus search · `R` refresh device · `?` shortcuts sheet · `Esc` close sheet.
 Suppressed while typing in an input and while any modifier is held.
 
 ## i18n
@@ -89,7 +102,8 @@ render as the raw key, which is how you spot a miss.
 `styles.css` starts with the design tokens (colour ramp, the `--led` / `--led-2`
 variables that `applyTint` rewrites live from the active task's colour, spacing, radii,
 type scale) followed by component blocks in the same order as the markup. Fonts: Chakra
-Petch (display), IBM Plex Sans / Mono. The layout collapses to a single column at phone
+Petch (display), IBM Plex Sans / Mono — self-hosted in `frontend/fonts/` (latin + latin-ext
+subsets, `fonts.css`), so the panel works on a LAN with no internet. The layout collapses to a single column at phone
 width and honours `prefers-reduced-motion`. Prefer extending a token over hard-coding a
 colour.
 
