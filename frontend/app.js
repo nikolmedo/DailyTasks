@@ -82,6 +82,7 @@ const state = {
   query: '',
   showAllDone: false,
   editingId: null,
+  editingCalId: null,
   ledOff: false,
   calLedOff: false,
   online: true,
@@ -190,6 +191,9 @@ const el = {
   closeCalSheetBtn: $('closeCalSheetBtn'),
   cancelCalSheetBtn: $('cancelCalSheetBtn'),
   calUrl: $('calUrl'),
+  calUrlField: $('calUrlField'),
+  calHelper: $('calHelper'),
+  calSheetTitle: $('calSheetTitle'),
   calName: $('calName'),
   calColorRow: $('calColorRow'),
   calColorSwatch: $('calColorSwatch'),
@@ -1339,6 +1343,9 @@ function calendarRow(cal) {
         ${cal.last_error ? `<span class="cal-error">${escapeHtml(cal.last_error)}</span>` : ''}
       </div>
       <div class="cal-actions">
+        <button class="task-action" type="button" data-cal-action="edit" data-id="${cal.id}"
+                aria-label="${escapeHtml(i18n.t('calendar.edit'))}"
+                title="${escapeHtml(i18n.t('calendar.edit'))}">${ICONS.edit}</button>
         <button class="task-action" type="button" data-cal-action="toggle" data-id="${cal.id}"
                 aria-pressed="${cal.enabled ? 'true' : 'false'}"
                 aria-label="${escapeHtml(i18n.t(cal.enabled ? 'calendar.disable' : 'calendar.enable'))}"
@@ -2010,7 +2017,54 @@ function setCalLedOff(off) {
   el.calColorRow.classList.toggle('is-off', off);
 }
 
+function setCalSheetMode(editing) {
+  el.calUrlField.hidden = editing;
+  el.calHelper.hidden = editing;
+  el.calUrl.required = !editing;
+  el.calSheetTitle.textContent = i18n.t(editing ? 'calendar.editTitle' : 'calendar.addTitle');
+  el.calSubmitBtn.textContent = i18n.t(editing ? 'calendar.save' : 'calendar.connect');
+}
+
+function editCalendar(id) {
+  const cal = state.calendars.find(c => c.id === Number(id));
+  if (!cal) return;
+  el.calendarForm.reset();
+  state.editingCalId = cal.id;
+  setCalSheetMode(true);
+  el.calName.value = cal.name;
+  const rgb = parseRgb(cal.led_color);
+  el.calColorPicker.value = rgb ? rgbToHex(rgb.r, rgb.g, rgb.b) : '#e0a34a';
+  setCalLedOff(!rgb);
+  syncCalColor();
+  showHint(el.calFormHint, null);
+  openSheet(el.calendarSheet);
+}
+
+async function saveCalendar() {
+  const rgb = hexToRgb(el.calColorPicker.value);
+  const payload = {
+    name: el.calName.value.trim() || undefined,
+    led_color: state.calLedOff || !rgb ? 'null' : `${rgb.r},${rgb.g},${rgb.b}`
+  };
+  el.calSubmitBtn.disabled = true;
+  showHint(el.calFormHint, null);
+  try {
+    await api(`/api/calendars/${state.editingCalId}`, jsonBody('PUT', payload));
+    await Promise.all([loadCalendars(), loadStatus()]);
+    closeSheet(el.calendarSheet);
+    await withTransition(renderAll);
+    refreshEinkPreview(true);
+    toast(i18n.t('notifications.calendarUpdated'));
+  } catch (error) {
+    showHint(el.calFormHint, error.message);
+  } finally {
+    el.calSubmitBtn.disabled = false;
+  }
+}
+
 function newCalendar() {
+  state.editingCalId = null;
+  setCalSheetMode(false);
   el.calendarForm.reset();
   el.calColorPicker.value = '#e0a34a';
   setCalLedOff(false);
@@ -2022,6 +2076,7 @@ function newCalendar() {
 async function submitCalendar(event) {
   event.preventDefault();
   if (el.calSubmitBtn.disabled) return;
+  if (state.editingCalId !== null) return saveCalendar();
 
   const url = el.calUrl.value.trim();
   if (!url) {
@@ -2409,7 +2464,8 @@ el.calendarList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-cal-action]');
   if (!button) return;
   const { calAction, id } = button.dataset;
-  if (calAction === 'toggle') toggleCalendar(id);
+  if (calAction === 'edit') editCalendar(id);
+  else if (calAction === 'toggle') toggleCalendar(id);
   else if (calAction === 'delete') removeCalendar(id);
 });
 
