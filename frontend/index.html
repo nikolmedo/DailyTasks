@@ -436,14 +436,14 @@
     </header>
 
     <form id="calendarForm" class="sheet-body" novalidate>
-      <div class="field">
+      <div class="field" id="calUrlField">
         <label for="calUrl" class="field-label" data-i18n="calendar.urlLabel">Dirección iCal (.ics)</label>
         <input type="url" id="calUrl" class="input mono small"
                data-i18n-placeholder="calendar.urlPlaceholder"
                placeholder="https://calendar.google.com/…/basic.ics" required autocomplete="off" spellcheck="false">
       </div>
 
-      <details class="helper">
+      <details class="helper" id="calHelper">
         <summary data-i18n="calendar.help">¿Cómo obtengo la dirección?</summary>
         <p class="helper-body" data-i18n-html="calendar.helpSteps"></p>
         <p class="helper-warn">
