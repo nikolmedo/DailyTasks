@@ -17,7 +17,8 @@ with read-only iCal calendar subscriptions, and every minute drives two outputs:
 (HUD with title, time range, progress, next item). A vanilla-JS web panel on port
 **5000** is the control surface and mirrors the e-ink frame live.
 
-No build step. No bundler. No framework. No test suite. No TypeScript.
+No build step. No bundler. No framework. No TypeScript. Tests: `cd backend && npm test`
+(Node built-in runner, temp DB via `DB_PATH`; CI runs them on every PR).
 
 ---
 
@@ -34,7 +35,7 @@ No build step. No bundler. No framework. No test suite. No TypeScript.
 | Timezone | Always from the `config.timezone` row, never the host clock |
 | Language | `config.language` (`es` \| `en`), default `es` |
 | Hardware Python | `/opt/distiller-sdk/.venv/bin/python3`, `PYTHONPATH=/opt/distiller-sdk/src` |
-| Version control | **This directory is not a git repo.** Edits are unrecoverable — do not mass-rewrite files |
+| Version control | Git repo (`origin` = github.com/nikolmedo/DailyTasks). **`main` is protected**: work on a branch, open a PR, the `test` CI check must pass, then merge. No direct pushes |
 | Protected ports (never kill) | 3000, 3005, 8080, 48081 — killing them ends the agent session |
 
 ---

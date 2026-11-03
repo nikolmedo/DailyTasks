@@ -54,7 +54,9 @@ All loops stop while the tab is hidden (`visibilitychange`) and catch up on retu
 scrim, focus restoration (`lastFocused`), `trapFocus()` for Tab cycling and swipe-down to
 close on phones. Sheets (`SHEETS`): `#taskSheet` (`newTask()` / `editTask(id)` /
 `submitTask()`, plus *Duplicate* when editing), `#calendarSheet` (`newCalendar()` /
-`submitCalendar()`), `#eventSheet` (`openEvent(key)`, read-only calendar event details) and
+`submitCalendar()`; `editCalendar(id)` reuses it in edit mode — URL field hidden, submit
+goes to `saveCalendar()` → `PUT /api/calendars/:id`, tracked by `state.editingCalId`),
+`#eventSheet` (`openEvent(key)`, read-only calendar event details) and
 `#shortcutsSheet`. Validation errors surface inline through `showHint(node, message)`.
 
 Mutations re-render through `withTransition(renderAll)` — a View Transition where supported;

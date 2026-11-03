@@ -119,5 +119,11 @@ curl -s -X POST localhost:5000/api/calendars/sync
 curl -s -X POST localhost:5000/api/refresh
 ```
 
-There is no automated test suite. Verify changes by driving the API and reading
-`database/display_temp.png` / `/api/display/preview.png`.
+Automated tests: `cd backend && npm test` (Node built-in runner, files in
+`backend/test/*.test.js`). `test/helpers.js` sets `DB_PATH` to a temp file before requiring
+`database.js` — require it first in every test file. Server, scheduler and hardware
+controllers are not covered (they drive the LED/e-ink on listen); verify those by driving
+the API and reading `database/display_temp.png` / `/api/display/preview.png`.
+
+CI (`.github/workflows/ci.yml`, job `test`) runs `node --check` on all JS plus the suite on
+every PR to `main`, and is a required status check.
