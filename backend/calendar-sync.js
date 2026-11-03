@@ -255,6 +255,7 @@ function getSyncState() {
 
 module.exports = {
   normalizeUrl,
+  expandFeed,
   syncCalendar,
   syncAll,
   probe,
