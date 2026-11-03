@@ -12,7 +12,10 @@ Fast path, so you do not have to open anything else for a small task:
 - `backend/agenda.js` decides what is active — never duplicate that logic elsewhere.
 - Every user-facing string exists twice: `locales/{es,en}.json` and the inline catalogs in
   `frontend/i18n.js`.
-- This directory is **not a git repository** — there is no undo. Make surgical edits.
+- Git repo with a **protected `main`**: never push to it directly. Branch → PR → CI check
+  `test` must pass → merge. Run `cd backend && npm test` before opening the PR.
+- **Keep docs in sync**: when a change affects behaviour, API, UI or workflow, update
+  README.md, AGENTS.md and the relevant `docs/agents/` page in the same PR.
 - Do not stop or kill anything on ports 3000, 3005, 8080 or 48081 (Distiller platform
   services, including the one hosting your session).
 - All code, comments and documentation are written in **English**.

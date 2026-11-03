@@ -90,7 +90,7 @@ Name, time range, weekdays, all-day, LED colour. Keyboard-first: <kbd>N</kbd> ne
 
 **Calendars**
 
-Subscribe to any iCal feed, give it a colour, pause it, or force a sync.
+Subscribe to any iCal feed, then rename it, change its LED colour (or turn the LED off for it), pause it, or force a sync.
 
 <img src="docs/images/calendars.png" alt="Calendar subscriptions" width="100%">
 
@@ -281,7 +281,7 @@ curl -X POST http://localhost:5000/api/tasks \
 ```
 GET    /api/calendars          Subscriptions + sync state
 POST   /api/calendars          Subscribe (the feed is validated before it is stored)
-PUT    /api/calendars/:id      Rename, recolour or pause
+PUT    /api/calendars/:id      Rename, recolour or pause (edited from the pencil button in the UI)
 DELETE /api/calendars/:id      Unsubscribe and drop its cached events
 POST   /api/calendars/sync     Force a sync of every enabled subscription
 ```
@@ -339,12 +339,14 @@ daily-tasks/
 │   ├── led-controller.js      RGB LED control (async, coalesced)
 │   ├── display-controller.js  E-ink payload building + render queue
 │   ├── render_display.py      1-bit HUD renderer (PIL)
-│   └── i18n.js                Backend translation helper
+│   ├── i18n.js                Backend translation helper
+│   └── test/                  node:test suite (agenda, database, iCal parsing)
 ├── frontend/
 │   ├── index.html             Control panel markup
 │   ├── styles.css             "Instrument" design system
 │   ├── i18n.js                Frontend i18n runtime (catalogs bundled inline)
 │   └── app.js                 Frontend logic
+├── .github/workflows/ci.yml   CI: syntax check + tests on every PR to main
 ├── locales/                   es.json · en.json · timezones.json
 ├── database/                  tasks.db · last rendered frame
 └── docs/agents/               Reference documentation for AI agents
@@ -437,6 +439,18 @@ More: [`docs/agents/troubleshooting.md`](docs/agents/troubleshooting.md).
 | E-ink | Distiller SDK (`distiller_sdk.hardware.eink`) + Pillow |
 
 Six runtime dependencies, total.
+
+---
+
+## Tests and contributing
+
+```bash
+cd backend && npm install && npm test
+```
+
+Tests use Node's built-in runner and a throwaway SQLite file (`DB_PATH` env var), so they
+never touch `database/tasks.db` or the hardware. `main` is protected: changes go through a
+pull request and the `test` check (`.github/workflows/ci.yml`) must pass before merging.
 
 ---
 
