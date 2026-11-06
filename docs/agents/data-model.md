@@ -26,6 +26,7 @@ CREATE TABLE calendars (
   url          TEXT NOT NULL UNIQUE,              -- iCal feed (https, or webcal rewritten)
   led_color    TEXT,
   enabled      INTEGER NOT NULL DEFAULT 1,
+  show_all_day INTEGER NOT NULL DEFAULT 0,        -- 1 ⇒ all-day events are shown in the agenda
   last_sync    DATETIME,                          -- ISO string, set on success *and* failure
   last_error   TEXT,                              -- NULL when the last sync succeeded
   event_count  INTEGER NOT NULL DEFAULT 0,
@@ -102,9 +103,8 @@ Calendar-only extras: `location`, `calendar_id`, `calendar_name`, `continuesBefo
 - **`led_color` may be the four-character string `"null"`**, not just SQL `NULL` — the
   frontend sends it for "LED off". Every consumer must treat `'null'` as absent
   (`agenda.js`, `led-controller.parseColor`, the route validators all do).
-- **All-day events are floating dates.** They are pinned to UTC midnight on write and
-  read back with `setZone(zone, { keepLocalTime: true })`, so "all day" means the user's
-  day, not a 24-hour UTC window.
+- **All-day events are floating dates** pinned to UTC midnight on write, but the agenda
+  hides them unless `calendars.show_all_day = 1` (default 0).
 - **`event_count` is not decremented on failure.** A failed sync keeps the previous
   count and the previously cached rows.
 - **Deleting a calendar deletes its events twice over** — explicit delete plus FK cascade.

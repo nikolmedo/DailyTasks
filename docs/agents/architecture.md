@@ -45,8 +45,11 @@ instead (`continuesBefore` / `continuesAfter` flags mark the truncation).
 ### All-day semantics
 
 - All-day **task**: `startMinutes = 0`, `endMinutes = 1440`; progress tracks the whole day.
-- All-day **event**: same, plus multi-day events spanning the whole local day are treated
-  as all-day (`spansWholeDay`).
+- All-day iCal **events** (`all_day = 1`) are **hidden by default**: `eventToSlot()`
+  returns `null` unless the calendar has `calendars.show_all_day = 1` (exposed on the
+  joined row as `calendar_show_all_day`). The sync always stores them, so toggling the
+  option needs no re-sync. When shown they behave like all-day tasks. Timed multi-day
+  events spanning the whole local day are always all-day slots (`spansWholeDay`).
 
 ---
 

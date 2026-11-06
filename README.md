@@ -165,11 +165,13 @@ Cloud project, OAuth client or token refresh is involved.
   window of −2 to +21 days, and cached locally.
 - Events appear in the day alongside your tasks, marked read-only, and drive the LED and
   the e-ink panel exactly like a task.
-- Timed, all-day and multi-day events are all handled; multi-day events are clamped to
-  each day they touch.
+- Timed and multi-day events are handled; multi-day events are clamped to each day they
+  touch. **All-day events (`VALUE=DATE`) are hidden by default** — birthdays and holidays
+  don't occupy the screen or the LED. Turn on *Show all-day events* in a calendar's edit
+  sheet to include them. (All-day *tasks* you create yourself always work.)
 - Re-synced on your interval (5–180 minutes, default 15).
 
-**When several things overlap**, a concrete appointment beats an all-day backdrop, and
+**When several things overlap**, a concrete appointment beats an all-day task backdrop, and
 among overlapping appointments the most recently started one wins — the one you just
 walked into.
 

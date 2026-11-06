@@ -12,6 +12,18 @@ const slot = (start, end, extra = {}) => ({
   ...extra
 });
 
+test('all-day calendar events are hidden unless the calendar opts in', () => {
+  const dayStart = DateTime.fromISO('2026-11-03', { zone: 'UTC' });
+  const ev = extra => ({
+    id: 1, title: 'Holiday', all_day: 1, calendar_id: 1, calendar_name: 'c',
+    start_utc: '2026-11-03T00:00:00.000Z', end_utc: '2026-11-04T00:00:00.000Z', ...extra
+  });
+  assert.equal(agenda.eventToSlot(ev({ calendar_show_all_day: 0 }), dayStart), null);
+  const shown = agenda.eventToSlot(ev({ calendar_show_all_day: 1 }), dayStart);
+  assert.equal(shown.all_day, true);
+  assert.equal(shown.name, 'Holiday');
+});
+
 test('timeToMinutes / minutesToTime round-trip and wrap', () => {
   assert.equal(agenda.timeToMinutes('09:30'), 570);
   assert.equal(agenda.minutesToTime(570), '09:30');
