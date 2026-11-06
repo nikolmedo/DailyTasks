@@ -54,7 +54,7 @@ All four mutating routes call `scheduler.forceUpdate()` before responding.
 |---|---|---|
 | `GET` | `/api/calendars` | `{ data: calendars[], sync: { syncing, lastSyncAt } }` |
 | `POST` | `/api/calendars` | Subscribe. Normalises the URL, rejects duplicates (`409`), **probes the feed before storing**, then performs a first sync. `201` |
-| `PUT` | `/api/calendars/:id` | Rename / recolour / enable-disable. Omitted fields keep their current value |
+| `PUT` | `/api/calendars/:id` | Rename / recolour / enable-disable / `show_all_day` (also accepted on `POST`). Omitted fields keep their current value |
 | `DELETE` | `/api/calendars/:id` | Unsubscribes and drops the cached events (FK cascade + explicit delete) |
 | `POST` | `/api/calendars/sync` | Force-sync every enabled calendar → `{ data: results[], calendars: [...] }` |
 

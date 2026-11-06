@@ -90,7 +90,7 @@ device never lags the panel.
 7. **Times inside a day are integer minutes since local midnight** (`startMinutes`,
    `endMinutes`, 0–1440). `HH:MM` strings are for storage and display only.
 8. **Calendar events are stored in UTC ISO**, except all-day events which are pinned to
-   UTC midnight as bare dates and converted with `keepLocalTime`.
+   UTC midnight as bare dates. The agenda hides imported all-day events unless the calendar has `show_all_day = 1`.
 
 ---
 

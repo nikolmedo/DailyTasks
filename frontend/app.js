@@ -198,6 +198,7 @@ const el = {
   calColorRow: $('calColorRow'),
   calColorSwatch: $('calColorSwatch'),
   calColorPicker: $('calColorPicker'),
+  calShowAllDay: $('calShowAllDay'),
   calColorValue: $('calColorValue'),
   calLedOnCheck: $('calLedOnCheck'),
   calSubmitBtn: $('calSubmitBtn'),
@@ -2035,6 +2036,7 @@ function editCalendar(id) {
   const rgb = parseRgb(cal.led_color);
   el.calColorPicker.value = rgb ? rgbToHex(rgb.r, rgb.g, rgb.b) : '#e0a34a';
   setCalLedOff(!rgb);
+  el.calShowAllDay.checked = Boolean(cal.show_all_day);
   syncCalColor();
   showHint(el.calFormHint, null);
   openSheet(el.calendarSheet);
@@ -2044,7 +2046,8 @@ async function saveCalendar() {
   const rgb = hexToRgb(el.calColorPicker.value);
   const payload = {
     name: el.calName.value.trim() || undefined,
-    led_color: state.calLedOff || !rgb ? 'null' : `${rgb.r},${rgb.g},${rgb.b}`
+    led_color: state.calLedOff || !rgb ? 'null' : `${rgb.r},${rgb.g},${rgb.b}`,
+    show_all_day: el.calShowAllDay.checked ? 1 : 0
   };
   el.calSubmitBtn.disabled = true;
   showHint(el.calFormHint, null);
@@ -2089,7 +2092,8 @@ async function submitCalendar(event) {
   const payload = {
     url,
     name: el.calName.value.trim() || undefined,
-    led_color: state.calLedOff || !rgb ? 'null' : `${rgb.r},${rgb.g},${rgb.b}`
+    led_color: state.calLedOff || !rgb ? 'null' : `${rgb.r},${rgb.g},${rgb.b}`,
+    show_all_day: el.calShowAllDay.checked ? 1 : 0
   };
 
   el.calSubmitBtn.disabled = true;

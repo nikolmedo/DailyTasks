@@ -84,8 +84,10 @@ function taskToSlot(task) {
 
 /**
  * Turn a cached calendar occurrence into a slot clamped to the given local day.
- * Returns null when the occurrence does not touch that day.
+ * Returns null when the occurrence does not touch that day, and for all-day
+ * events (birthdays, holidays…) unless the calendar has `show_all_day` on.
  * @param {Object} event - row from `calendar_events` joined with `calendars`
+ *   (`calendar_show_all_day` carries the calendar's all-day opt-in)
  * @param {DateTime} dayStart - start of the local day
  * @returns {Object|null} slot
  */
@@ -93,6 +95,9 @@ function eventToSlot(event, dayStart) {
   const zone = dayStart.zone;
   const dayEnd = dayStart.plus({ days: 1 });
   const allDay = Boolean(event.all_day);
+
+  // All-day events are hidden unless the calendar opted in (`show_all_day`)
+  if (allDay && !event.calendar_show_all_day) return null;
 
   let start;
   let end;
@@ -319,6 +324,7 @@ module.exports = {
   minutesToTime,
   dayOfWeek,
   isTaskActiveOnDay,
+  eventToSlot,
   buildAgenda,
   isSlotActive,
   slotProgress,

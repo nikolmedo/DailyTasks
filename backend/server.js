@@ -188,7 +188,7 @@ app.get('/api/calendars', (req, res) => {
 // POST /api/calendars - Subscribe to a feed (validated before it is stored)
 app.post('/api/calendars', async (req, res) => {
   try {
-    const { url, name, led_color } = req.body;
+    const { url, name, led_color, show_all_day } = req.body;
 
     let normalized;
     try {
@@ -216,7 +216,8 @@ app.post('/api/calendars', async (req, res) => {
       name: (name && String(name).trim()) || probed.name || 'Google Calendar',
       url: normalized,
       led_color: led_color === 'null' ? null : led_color,
-      enabled: 1
+      enabled: 1,
+      show_all_day: show_all_day ? 1 : 0
     });
 
     await calendarSync.syncCalendar(calendar);
@@ -229,7 +230,7 @@ app.post('/api/calendars', async (req, res) => {
   }
 });
 
-// PUT /api/calendars/:id - Rename, recolour or pause a subscription
+// PUT /api/calendars/:id - Rename, recolour, pause or toggle all-day events of a subscription
 app.put('/api/calendars/:id', (req, res) => {
   try {
     const existing = db.getCalendarById(req.params.id);
@@ -237,7 +238,7 @@ app.put('/api/calendars/:id', (req, res) => {
       return res.status(404).json({ success: false, error: 'Calendar not found' });
     }
 
-    const { name, led_color, enabled } = req.body;
+    const { name, led_color, enabled, show_all_day } = req.body;
     if (led_color && led_color !== 'null' && !COLOR_REGEX.test(led_color)) {
       return res.status(400).json({ success: false, error: 'Invalid LED color format. Use "r,g,b" or null' });
     }
@@ -245,7 +246,8 @@ app.put('/api/calendars/:id', (req, res) => {
     const calendar = db.updateCalendar(req.params.id, {
       name: (name && String(name).trim()) || existing.name,
       led_color: led_color === 'null' ? null : (led_color !== undefined ? led_color : existing.led_color),
-      enabled: enabled === undefined ? existing.enabled : (enabled ? 1 : 0)
+      enabled: enabled === undefined ? existing.enabled : (enabled ? 1 : 0),
+      show_all_day: show_all_day === undefined ? existing.show_all_day : (show_all_day ? 1 : 0)
     });
 
     events.emit('calendars');

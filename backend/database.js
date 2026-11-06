@@ -86,6 +86,7 @@ function initDatabase() {
   `);
 
   migrate(`ALTER TABLE calendar_events ADD COLUMN description TEXT`, 'calendar_events.description column');
+  migrate(`ALTER TABLE calendars ADD COLUMN show_all_day INTEGER NOT NULL DEFAULT 0`, 'calendars.show_all_day column');
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_window ON calendar_events (start_utc, end_utc)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_calendar ON calendar_events (calendar_id)`);
@@ -158,10 +159,10 @@ function initStatements() {
   getCalendarById = db.prepare('SELECT * FROM calendars WHERE id = ?');
   getCalendarByUrl = db.prepare('SELECT * FROM calendars WHERE url = ?');
   createCalendar = db.prepare(`
-    INSERT INTO calendars (name, url, led_color, enabled) VALUES (?, ?, ?, ?)
+    INSERT INTO calendars (name, url, led_color, enabled, show_all_day) VALUES (?, ?, ?, ?, ?)
   `);
   updateCalendar = db.prepare(`
-    UPDATE calendars SET name = ?, led_color = ?, enabled = ? WHERE id = ?
+    UPDATE calendars SET name = ?, led_color = ?, enabled = ?, show_all_day = ? WHERE id = ?
   `);
   deleteCalendar = db.prepare('DELETE FROM calendars WHERE id = ?');
   setCalendarSyncResult = db.prepare(`
@@ -176,14 +177,14 @@ function initStatements() {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   getEventsInRange = db.prepare(`
-    SELECT e.*, c.name AS calendar_name, c.led_color AS calendar_color
+    SELECT e.*, c.name AS calendar_name, c.led_color AS calendar_color, c.show_all_day AS calendar_show_all_day
     FROM calendar_events e
     JOIN calendars c ON c.id = e.calendar_id
     WHERE c.enabled = 1 AND e.end_utc > ? AND e.start_utc < ?
     ORDER BY e.start_utc ASC
   `);
   getEventById = db.prepare(`
-    SELECT e.*, c.name AS calendar_name, c.led_color AS calendar_color
+    SELECT e.*, c.name AS calendar_name, c.led_color AS calendar_color, c.show_all_day AS calendar_show_all_day
     FROM calendar_events e
     JOIN calendars c ON c.id = e.calendar_id
     WHERE e.id = ?
@@ -249,12 +250,13 @@ module.exports = {
       cal.name,
       cal.url,
       cal.led_color || null,
-      cal.enabled === 0 ? 0 : 1
+      cal.enabled === 0 ? 0 : 1,
+      cal.show_all_day ? 1 : 0
     );
     return getCalendarById.get(info.lastInsertRowid);
   },
   updateCalendar: (id, cal) => {
-    updateCalendar.run(cal.name, cal.led_color || null, cal.enabled ? 1 : 0, id);
+    updateCalendar.run(cal.name, cal.led_color || null, cal.enabled ? 1 : 0, cal.show_all_day ? 1 : 0, id);
     return getCalendarById.get(id);
   },
   deleteCalendar: (id) => {
